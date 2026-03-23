@@ -11,6 +11,9 @@ import modules.config as c
 def get_pdfium_by_target(target, append_target_os=True, enable_v8=False):
     l.colored("Building PDFium...", l.YELLOW)
 
+    current_file_dir = os.path.dirname(os.path.abspath(__file__))
+    local_pdfium_path = os.path.abspath(os.path.join(current_file_dir, "..", "..", "pdfium"))
+
     build_dir = os.path.join("build", target)
     f.create_dir(build_dir)
 
@@ -19,13 +22,23 @@ def get_pdfium_by_target(target, append_target_os=True, enable_v8=False):
     target_dir = os.path.join(build_dir, "pdfium")
     f.remove_dir(target_dir)
 
-    # clone pdfium
-    l.colored("Cloning PDFium with gclient...", l.YELLOW)
+    # copy local source to build directory
+    l.colored(f"Copying PDFium source from {local_pdfium_path}...", l.YELLOW)
+    f.copy_dir(local_pdfium_path, target_dir)
+
+    # initialize temporary git in the copy to satisfy gclient
+    l.colored("Initializing temporary git in build copy...", l.YELLOW)
+    r.run(["git", "init"], cwd=target_dir)
+    r.run(["git", "add", "."], cwd=target_dir)
+    r.run(["git", "commit", "--allow-empty", "-m", "local-build-sync"], cwd=target_dir)
+
+    # configure gclient
+    l.colored("Configuring gclient...", l.YELLOW)
     config_args = [
         "gclient",
         "config",
         "--unmanaged",
-        "https://pdfium.googlesource.com/pdfium.git",
+        "pdfium",
     ]
 
     if not enable_v8:
@@ -42,32 +55,28 @@ def get_pdfium_by_target(target, append_target_os=True, enable_v8=False):
         gclient_file = os.path.join(build_dir, ".gclient")
         f.append_to_file(gclient_file, "target_os = [ '{}' ]".format(target))
 
-    l.colored(f"Syncing repository with branch {c.pdfium_git_branch}...", l.YELLOW)
-    r.run(
-        [
-            "gclient",
-            "sync",
-            "-r",
-            f"origin/{c.pdfium_git_branch}",
-            "--no-history",
-            "--shallow",
-        ],
-        cwd=build_dir,
-    )
+    # remove any parent .git file/dir that could confuse gclient's git commands
+    # (e.g. submodule pointer from host volume mount)
+    root_git = os.path.join(os.getcwd(), ".git")
+    root_git_backup = None
+    if os.path.isfile(root_git):
+        root_git_backup = root_git + ".bak"
+        l.colored("Temporarily hiding root .git submodule pointer...", l.YELLOW)
+        os.rename(root_git, root_git_backup)
 
-    # reset and clean directories
-    folders_to_reset = [
-        "pdfium",
-        "pdfium/build",
-        "pdfium/third_party/libjpeg_turbo",
-        "pdfium/base/allocator/partition_allocator",
-    ]
-
-    for folder in folders_to_reset:
-        full_path = os.path.join(build_dir, folder)
-
-        if os.path.exists(full_path):
-            r.run(["git", "reset", "--hard"], cwd=full_path)
-            r.run(["git", "clean", "-df"], cwd=full_path)
+    try:
+        l.colored("Syncing dependencies...", l.YELLOW)
+        r.run(
+            [
+                "gclient",
+                "sync",
+                "--no-history",
+                "--shallow",
+            ],
+            cwd=build_dir,
+        )
+    finally:
+        if root_git_backup and os.path.exists(root_git_backup):
+            os.rename(root_git_backup, root_git)
 
     l.ok()

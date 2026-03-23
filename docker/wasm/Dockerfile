@@ -12,8 +12,11 @@ ENV PYTHONIOENCODING="utf8"
 ENV LC_ALL=C.UTF-8
 
 # packages
-RUN apt-get -y update
-RUN apt-get install -y build-essential sudo file git wget curl cmake ninja-build zip unzip tar python3 python3-pip openjdk-${JAVA_VERSION}-jdk nano lsb-release libglib2.0-dev tzdata doxygen python3-setuptools --no-install-recommends && \
+RUN apt-get -y update && \
+    apt-get install -y build-essential sudo file git wget curl cmake ninja-build zip unzip tar python3 python3-pip nano lsb-release libglib2.0-dev tzdata doxygen python3-setuptools --no-install-recommends
+RUN echo '#!/bin/bash\nexit 0' > /usr/local/bin/keytool && chmod +x /usr/local/bin/keytool && \
+    apt-get install -y --no-install-recommends openjdk-${JAVA_VERSION}-jdk && \
+    rm -f /usr/local/bin/keytool && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
@@ -33,35 +36,36 @@ ENV DEPOT_TOOLS_WIN_TOOLCHAIN=0
 RUN git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git -b main /opt/depot-tools
 ENV PATH=${PATH}:/opt/depot-tools
 
-# pdfium
+# pdfium - copy local source and sync only dependencies via gclient
 RUN mkdir /build
 WORKDIR /build
-RUN gclient config --custom-var checkout_configuration=minimal --unmanaged https://pdfium.googlesource.com/pdfium.git
+
+# copy local pdfium source (must exist in docker build context as ./pdfium)
+COPY ./pdfium /build/pdfium
+
+# initialize a temporary git repo to satisfy gclient --unmanaged requirement
+# remove the submodule .git pointer file first so git init works cleanly
+RUN rm -f /build/pdfium/.git && \
+    git -C /build/pdfium init && \
+    git -C /build/pdfium config user.email "build@local" && \
+    git -C /build/pdfium config user.name "build" && \
+    git -C /build/pdfium add . && \
+    git -C /build/pdfium commit -m "local-build-sync"
+
+# configure gclient to use the local (unmanaged) source and sync only dependencies
+RUN gclient config --custom-var checkout_configuration=minimal --unmanaged pdfium
 RUN echo "target_os = [ 'emscripten' ]" >> .gclient
-RUN gclient sync -r origin/chromium/7623 --no-history --shallow
+RUN gclient sync --no-history --shallow
 
-# pdfium reset and clean directories
-RUN git -C /build/pdfium reset --hard
-RUN git -C /build/pdfium clean -df
-
-RUN git -C /build/pdfium/build reset --hard
-RUN git -C /build/pdfium/build clean -df
-
-RUN git -C /build/pdfium/third_party/libjpeg_turbo reset --hard
-RUN git -C /build/pdfium/third_party/libjpeg_turbo clean -df
-
-RUN git -C /build/pdfium/base/allocator/partition_allocator reset --hard
-RUN git -C /build/pdfium/base/allocator/partition_allocator clean -df
-
-# pdfium checkout
-WORKDIR /build/pdfium
-RUN git status
+# preserve pdfium source at /pdfium before cleaning /build
+# pdfium.py resolves: /app/modules/../../pdfium = /pdfium
+RUN cp -r /build/pdfium /pdfium
 
 # system dependencies
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 RUN apt update -y \
-    && echo n | ./build/install-build-deps.sh || true \
+    && echo n | /build/pdfium/build/install-build-deps.sh || true \
     && rm -rf /build
 
 # ninja
@@ -75,8 +79,8 @@ RUN pip3 install setuptools docopt pygemstones
 RUN mkdir /emsdk
 WORKDIR /emsdk
 RUN git clone https://github.com/emscripten-core/emsdk.git .
-RUN ./emsdk install 4.0.10
-RUN ./emsdk activate 4.0.10
+RUN ./emsdk install 4.0.15
+RUN ./emsdk activate 4.0.15
 ENV PATH="${PATH}:/emsdk:/emsdk/upstream/emscripten"
 
 # cache system libraries
