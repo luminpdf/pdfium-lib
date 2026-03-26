@@ -35,13 +35,15 @@ This installs all build tools (depot_tools, Emscripten SDK, ninja, etc.) and pre
 
 **macOS arm64 (Apple Silicon):**
 ```bash
-docker build --platform linux/amd64 -t pdfium-wasm -f docker/wasm/Dockerfile docker/wasm
+docker build --platform linux/amd64 -t pdfium-wasm -f docker/wasm/Dockerfile.patched docker/wasm
 ```
 
 **Linux x86_64:**
 ```bash
-docker build -t pdfium-wasm -f docker/wasm/Dockerfile docker/wasm
+docker build -t pdfium-wasm -f docker/wasm/Dockerfile.patched docker/wasm
 ```
+
+> **Note:** Use `Dockerfile.patched` instead of `Dockerfile`. The patched version fixes a NodeSource apt script deprecation issue — see [Troubleshooting](#npm-not-found-during-docker-image-build) for details.
 
 This takes ~10-15 minutes on first run. Subsequent builds use Docker layer cache.
 
@@ -126,7 +128,7 @@ If you've only changed PDFium source (not build tooling), you can skip rebuildin
 rm -rf docker/wasm/pdfium && cp -r ../../pdfium docker/wasm/pdfium
 
 # 2. Rebuild Docker image (fast — only the COPY layer changes)
-docker build --platform linux/amd64 -t pdfium-wasm -f docker/wasm/Dockerfile docker/wasm
+docker build --platform linux/amd64 -t pdfium-wasm -f docker/wasm/Dockerfile.patched docker/wasm
 
 # 3. Run build pipeline (Step 3 above)
 ```
@@ -141,6 +143,38 @@ macOS case-insensitive filesystem collision with Linux sysroot headers (e.g., `x
 
 ### `gclient sync` fails with "uncommitted changes"
 The parent `.git` file (submodule pointer) confuses git. The build script hides it temporarily. If running manually, rename `.git` before running gclient.
+
+### `npm: not found` during Docker image build
+
+**Symptom:** Docker build fails at `RUN npm install -g npm@latest` with `/bin/sh: 1: npm: not found`.
+
+**Root cause:** The original `Dockerfile` installs Node.js via NodeSource's APT setup script (`setup_22.x`). NodeSource has deprecated these scripts, and they no longer reliably install `npm` alongside `nodejs` on Ubuntu 22.04.
+
+**Fix:** Use `Dockerfile.patched` instead of `Dockerfile`. The patched version removes the NodeSource dependency entirely and symlinks Node.js/npm from the Emscripten SDK (`/emsdk/node/*/bin/{node,npm,npx}`), which is already installed in the image.
+
+```bash
+# Use patched Dockerfile
+docker build --platform linux/amd64 -t pdfium-wasm -f docker/wasm/Dockerfile.patched docker/wasm
+```
+
+### Const-correctness compilation errors in custom PDFium C API functions
+
+**Symptom:** ninja build fails with errors like:
+```
+fpdf_annot.cpp: error: cannot initialize a variable of type 'const CPDF_Page *' with an rvalue of type 'IPDF_Page *'
+fpdf_annot.cpp: error: 'this' argument to member function 'AsPDFPage' has type 'const CPDF_Page', but function is not marked const
+fpdf_annot.cpp: error: cannot initialize a variable of type 'CPDF_Dictionary *' with an rvalue of type 'const CPDF_Dictionary *'
+```
+
+**Root cause:** When adding custom functions to the PDFium C API (e.g., in `fpdfsdk/fpdf_annot.cpp`), it's easy to use incorrect types that don't match upstream PDFium's API signatures. Common mistakes:
+
+| Mistake | Correct usage |
+|---------|---------------|
+| `const CPDF_Page* p = ctx->GetPage()` | `IPDF_Page* p = ctx->GetPage()` — returns `IPDF_Page*`, not `CPDF_Page*` |
+| `const CPDF_Page* p = page->AsPDFPage()` | `CPDF_Page* p = page->AsPDFPage()` — `AsPDFPage()` is non-const |
+| `CPDF_Dictionary* d = ctx->GetAnnotDict()` | `RetainPtr<CPDF_Dictionary> d = ctx->GetMutableAnnotDict()` — use the mutable accessor when you need to modify the dict |
+
+**Fix:** Check `cpdf_annotcontext.h` for the correct return types and const qualifiers. Use `GetMutableAnnotDict()` when the dictionary needs to be modified (e.g., calling `SetNewFor`).
 
 ### OOM during x86 emulation on Apple Silicon
 The build runs under Rosetta/QEMU emulation. Ensure Docker has at least 8 GB of memory allocated (Docker Desktop → Settings → Resources).
