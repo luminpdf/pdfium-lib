@@ -178,3 +178,117 @@ fpdf_annot.cpp: error: cannot initialize a variable of type 'CPDF_Dictionary *' 
 
 ### OOM during x86 emulation on Apple Silicon
 The build runs under Rosetta/QEMU emulation. Ensure Docker has at least 8 GB of memory allocated (Docker Desktop → Settings → Resources).
+
+---
+
+## Building with an OrbStack Linux VM (native arm64)
+
+Instead of Docker, you can build natively inside an OrbStack Linux VM. OrbStack mounts the Mac filesystem at the same path inside the VM, so source files are accessible directly.
+
+**Requirements:** OrbStack VM running Ubuntu 22.04 arm64.
+
+### Step 1: Copy source to the VM's native filesystem
+
+The build **must not run on the Mac-mounted path** — macOS APFS is case-insensitive and causes sysroot header collisions during `gclient sync`. Copy to the VM's ext4 filesystem first:
+
+```bash
+orb run -m <vm-name> bash -c '
+  mkdir -p /tmp/pdfium-build
+  cp -r /Users/<you>/path/to/packages/wasm/pdfium-lib /tmp/pdfium-build/pdfium-lib
+  cp -r /Users/<you>/path/to/packages/wasm/pdfium    /tmp/pdfium-build/pdfium
+'
+```
+
+### Step 2: Strip the `.git` submodule pointer from the pdfium copy
+
+The pdfium directory is a git submodule — its `.git` entry is a file (pointer to the host worktree), not a real repo. `pdfium.py` calls `git init` inside the copy, which fails if this pointer file exists:
+
+```
+fatal: not a git repository: /.../lumin-pdf-sdk/.git/worktrees/.../pdfium
+```
+
+**Fix:** Remove the pointer before running `make.py build-pdfium-wasm`:
+
+```bash
+orb run -m <vm-name> rm -f /tmp/pdfium-build/pdfium/.git
+```
+
+### Step 3: Patch DEPS to skip the reclient CIPD package
+
+`gclient sync` tries to install `infra/rbe/client/linux-arm64` via CIPD, but this package does not exist:
+
+```
+failed to resolve infra/rbe/client/linux-arm64@re_client_version:... no such package
+```
+
+**Fix:** Add a condition to the `buildtools/reclient` entry in `pdfium/DEPS` to skip it on arm64:
+
+```python
+# Before
+'buildtools/reclient': {
+    'packages': [...],
+    'dep_type': 'cipd',
+},
+
+# After
+'buildtools/reclient': {
+    'packages': [...],
+    'dep_type': 'cipd',
+    'condition': 'host_cpu != "arm64"',
+},
+```
+
+Apply with:
+
+```bash
+orb run -m <vm-name> python3 -c "
+content = open('/tmp/pdfium-build/pdfium/DEPS').read()
+old = \"'dep_type': 'cipd',\n  },\n\n  'buildtools/win'\"
+new = \"'dep_type': 'cipd',\n    'condition': 'host_cpu != \\\"arm64\\\"',\n  },\n\n  'buildtools/win'\"
+open('/tmp/pdfium-build/pdfium/DEPS', 'w').write(content.replace(old, new, 1))
+"
+```
+
+### Step 4: Run the full pipeline
+
+```bash
+orb run -m <vm-name> bash -c '
+export PATH=$PATH:/opt/depot-tools
+export DEPOT_TOOLS_UPDATE=0
+export DEPOT_TOOLS_WIN_TOOLCHAIN=0
+export GCLIENT_SUPPRESS_GIT_VERSION_WARNING=1
+export GIT_AUTHOR_NAME="build" GIT_AUTHOR_EMAIL="build@local"
+export GIT_COMMITTER_NAME="build" GIT_COMMITTER_EMAIL="build@local"
+export EMSDK=/tmp/pdfium-build/pdfium-lib/build/emsdk
+
+cd /tmp/pdfium-build/pdfium-lib
+
+python3 make.py build-emsdk
+source $EMSDK/emsdk_env.sh
+python3 make.py build-pdfium-wasm
+python3 make.py patch-wasm
+echo "n" | sudo bash build/emscripten/pdfium/build/install-build-deps.sh
+python3 make.py build-wasm
+python3 make.py install-wasm
+python3 make.py test-wasm
+python3 make.py generate-wasm
+'
+```
+
+### Step 5: Copy outputs back to Mac
+
+```bash
+orb run -m <vm-name> bash -c '
+cp -a /tmp/pdfium-build/pdfium-lib/build/emscripten/wasm/. \
+  "/Users/<you>/path/to/packages/wasm/pdfium-lib/build/emscripten/wasm/"
+'
+```
+
+Expected outputs in `build/emscripten/wasm/release/`:
+
+| File | Description |
+|------|-------------|
+| `lib/libpdfium.a` | Static library (~12 MB) |
+| `node/pdfium.js` + `pdfium.wasm` | UMD module |
+| `node/pdfium.esm.js` + `pdfium.esm.wasm` | ES module |
+| `node/pdfium.std.js` + `pdfium.std.wasm` | Standalone module |
