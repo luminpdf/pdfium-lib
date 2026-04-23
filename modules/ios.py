@@ -17,7 +17,11 @@ import modules.pdfium as p
 
 # -----------------------------------------------------------------------------
 def run_task_build_pdfium():
-    p.get_pdfium_by_target("ios")
+    p.get_pdfium_by_target(
+        "ios",
+        git_url=c.pdfium_mobile_git_url,
+        git_branch=c.pdfium_mobile_git_branch,
+    )
 
 
 # -----------------------------------------------------------------------------

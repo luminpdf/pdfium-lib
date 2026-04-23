@@ -8,6 +8,10 @@ pdfium_git_branch = "main"
 # OBS 1: don't forget change in android docker file (docker/android/Dockerfile)
 # OBS 2: don't forget change in wasm docker file (docker/wasm/Dockerfile)
 
+# iOS / Android use a custom fork instead of the upstream Google mirror
+pdfium_mobile_git_url = "git@github.com:luminpdf/pdfium.git"
+pdfium_mobile_git_branch = "luminpdf-mobile/main"
+
 # emsdk
 emsdk_version = "4.0.15"
 # OBS 1: don't forget change in wasm docker file (docker/wasm/Dockerfile)
