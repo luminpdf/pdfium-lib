@@ -52,9 +52,9 @@ ENV PATH=${PATH}:/opt/depot-tools
 # pdfium
 RUN mkdir /build
 WORKDIR /build
-RUN gclient config --custom-var checkout_configuration=minimal --unmanaged https://pdfium.googlesource.com/pdfium.git
+RUN gclient config --custom-var checkout_configuration=minimal --unmanaged git@github.com:luminpdf/pdfium.git
 RUN echo "target_os = [ 'android' ]" >> .gclient
-RUN gclient sync -r origin/chromium/7623 --no-history --shallow -j 4 || gclient sync -r origin/chromium/7623 --no-history --shallow -j 1
+RUN gclient sync -r origin/luminpdf-mobile/main --no-history --shallow -j 4 || gclient sync -r origin/luminpdf-mobile/main --no-history --shallow -j 1
 
 # pdfium reset and clean directories
 RUN git -C /build/pdfium reset --hard
