@@ -1,0 +1,4 @@
+[submodule "pdfium"]
+	path = pdfium
+	url = git@github.com:luminpdf/pdfium.git
+	branch = luminpdf-mobile/main
