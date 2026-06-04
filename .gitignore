@@ -1,6 +1,7 @@
 # Build
 build
 docker/wasm/pdfium/
+docker/android/pdfium/
 /sample/build
 /sample-wasm/build
 _bad_scm

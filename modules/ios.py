@@ -18,10 +18,7 @@ import modules.pdfium_paths as paths
 
 # -----------------------------------------------------------------------------
 def run_task_build_pdfium():
-    p.get_pdfium_shared(
-        git_url=c.pdfium_mobile_git_url,
-        git_branch=c.pdfium_mobile_git_branch,
-    )
+    p.get_pdfium_shared()
 
 
 def _ensure_ios_deps(source_dir):

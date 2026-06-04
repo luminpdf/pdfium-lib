@@ -11,17 +11,10 @@ import modules.pdfium_paths as paths
 
 
 # -----------------------------------------------------------------------------
-def get_pdfium_shared(
-    enable_v8=False,
-    git_url=None,
-    git_branch=None,
-):
-    """Sync PDFium + DEPS into pdfium-lib/pdfium/ (shared by iOS and Android)."""
+def get_pdfium_shared(enable_v8=False):
+    """Sync DEPS into the local pdfium-lib/pdfium/ checkout (shared by iOS and Android)."""
     l.colored("Building PDFium (shared mobile source)...", l.YELLOW)
     cm.ensure_depot_tools_on_path()
-
-    resolved_url = git_url or c.pdfium_mobile_git_url
-    resolved_branch = git_branch or c.pdfium_mobile_git_branch
 
     root_pdfium = os.path.abspath(
         paths.resolve_pdfium_source_dir() or paths.DEFAULT_ROOT_PDFIUM
@@ -45,19 +38,15 @@ def get_pdfium_shared(
     l.colored(f"Using PDFium source at {root_pdfium}", l.YELLOW)
 
     # gclient checks out into <gclient-root>/pdfium; the symlink sends DEPS into root_pdfium/.
-    _write_shared_gclient(build_dir, resolved_url, enable_v8)
-
-    _checkout_pdfium_branch(root_pdfium, resolved_branch)
+    _configure_shared_gclient(build_dir, enable_v8)
 
     _clean_pdfium_deps_before_sync(root_pdfium)
 
-    l.colored(f"Syncing repository with branch {resolved_branch}...", l.YELLOW)
+    l.colored("Syncing DEPS for local PDFium source...", l.YELLOW)
     r.run(
         [
             "gclient",
             "sync",
-            "-r",
-            f"origin/{resolved_branch}",
             "--no-history",
             "--shallow",
         ],
@@ -158,15 +147,21 @@ def _clean_stale_shared_checkout(build_dir, root_pdfium):
         f.remove_dir(bad_scm)
 
 
-def _checkout_pdfium_branch(root_pdfium, branch):
-    """Align pdfium-lib/pdfium/ with the branch gclient will sync (avoids branch switch errors)."""
-    remote_ref = f"origin/{branch}"
-    l.colored(f"Checking out {branch} in pdfium source...", l.YELLOW)
-    r.run(["git", "fetch", "origin", branch], cwd=root_pdfium)
-    r.run(
-        ["git", "checkout", "-B", branch, remote_ref],
-        cwd=root_pdfium,
-    )
+def _configure_shared_gclient(build_dir, enable_v8):
+    config_args = [
+        "gclient",
+        "config",
+        "--unmanaged",
+        "pdfium",
+    ]
+    if not enable_v8:
+        config_args.extend(["--custom-var", "checkout_configuration=minimal"])
+
+    r.run(config_args, cwd=build_dir)
+
+    target_os = ", ".join(f'"{t}"' for t in _shared_target_os_list())
+    gclient_file = os.path.join(build_dir, ".gclient")
+    f.append_to_file(gclient_file, f"target_os = [ {target_os} ]")
 
 
 def _link_gclient_pdfium_slot(build_dir, root_pdfium):
@@ -193,26 +188,6 @@ def _shared_target_os_list():
     if platform.system() == "Darwin":
         return ["ios"]
     return ["android"]
-
-
-def _write_shared_gclient(build_dir, git_url, enable_v8):
-    vars_line = ""
-    if not enable_v8:
-        vars_line = '    "custom_vars": {"checkout_configuration": "minimal"},\n'
-
-    target_os = ", ".join(f'"{t}"' for t in _shared_target_os_list())
-    content = f"""solutions = [
-  {{ "name": "pdfium",
-    "url": "{git_url}",
-    "deps_file": "DEPS",
-    "managed": False,
-{vars_line}  }},
-]
-target_os = [ {target_os} ]
-"""
-    gclient_file = os.path.join(build_dir, ".gclient")
-    with open(gclient_file, "w", encoding="utf-8") as handle:
-        handle.write(content)
 
 
 # -----------------------------------------------------------------------------

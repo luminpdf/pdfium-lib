@@ -13,7 +13,7 @@ export PDFIUM_SOURCE_DIR="$(pwd)/pdfium"
 python3 make.py build-pdfium-shared
 ```
 
-`depot_tools` are installed automatically if missing. Branch/url: **`modules/config.py`**.
+`depot_tools` are installed automatically if missing. Check out the **`pdfium/`** submodule first (`git submodule update --init pdfium`).
 
 Optional override: **`export PDFIUM_SOURCE_DIR=/abs/path/to/pdfium`**
 

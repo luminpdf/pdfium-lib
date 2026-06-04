@@ -44,17 +44,35 @@ RUN wget -q https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-b
 RUN gradle --version
 
 # google depot tools
+RUN git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git -b main /opt/depot-tools
+RUN DEPOT_TOOLS_UPDATE=1 /opt/depot-tools/update_depot_tools
 ENV DEPOT_TOOLS_UPDATE=0
 ENV DEPOT_TOOLS_WIN_TOOLCHAIN=0
-RUN git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git -b main /opt/depot-tools
 ENV PATH=${PATH}:/opt/depot-tools
 
-# pdfium (image warm-up; runtime builds mount repo-root pdfium/ via PDFIUM_SOURCE_DIR)
+# pdfium - copy local source and sync only dependencies via gclient
 RUN mkdir /build
 WORKDIR /build
-RUN gclient config --custom-var checkout_configuration=minimal --unmanaged git@github.com:luminpdf/pdfium.git
+
+# copy local pdfium source (must exist in docker build context as ./pdfium)
+COPY ./pdfium /build/pdfium
+
+# drop host-synced DEPS; gclient will re-fetch them from the local source tree
+RUN rm -rf /build/pdfium/third_party /build/pdfium/build /build/pdfium/out /build/pdfium/_bad_scm
+
+# initialize a temporary git repo to satisfy gclient --unmanaged requirement
+# remove the submodule .git pointer file first so git init works cleanly
+RUN rm -f /build/pdfium/.git && \
+    git -C /build/pdfium init && \
+    git -C /build/pdfium config user.email "build@local" && \
+    git -C /build/pdfium config user.name "build" && \
+    git -C /build/pdfium add . && \
+    git -C /build/pdfium commit -m "local-build-sync"
+
+# configure gclient to use the local (unmanaged) source and sync only dependencies
+RUN gclient config --custom-var checkout_configuration=minimal --unmanaged pdfium
 RUN echo "target_os = [ 'ios', 'android' ]" >> .gclient
-RUN gclient sync -r origin/luminpdf-mobile/main --no-history --shallow -j 4 || gclient sync -r origin/luminpdf-mobile/main --no-history --shallow -j 1
+RUN gclient sync --no-history --shallow -j 4 || gclient sync --no-history --shallow -j 1
 
 # pdfium reset and clean directories
 RUN git -C /build/pdfium reset --hard

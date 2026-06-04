@@ -4,13 +4,8 @@ task = ""
 
 # pdfium
 pdfium_git_branch = "main"
-# ^ ref: https://github.com/luminpdf/pdfium
-# OBS 1: don't forget change in android docker file (docker/android/Dockerfile)
-# OBS 2: don't forget change in wasm docker file (docker/wasm/Dockerfile)
-
-# iOS / Android use a custom fork instead of the upstream Google mirror
-pdfium_mobile_git_url = "git@github.com:luminpdf/pdfium.git"
-pdfium_mobile_git_branch = "luminpdf-mobile/main"
+# ^ ref: https://github.com/luminpdf/pdfium (macOS / WASM legacy checkout only)
+# OBS: don't forget change in wasm docker file (docker/wasm/Dockerfile)
 
 # Shared source: pdfium-lib/pdfium submodule (override with PDFIUM_SOURCE_DIR).
 # gclient sync runs under pdfium-lib/build/shared/ (host-specific target_os).

@@ -112,10 +112,7 @@ def main(options):
 
     # build pdfium - shared mobile source (iOS + Android)
     elif task == "build-pdfium-shared":
-        pdfium.get_pdfium_shared(
-            git_url=c.pdfium_mobile_git_url,
-            git_branch=c.pdfium_mobile_git_branch,
-        )
+        pdfium.get_pdfium_shared()
 
     # build pdfium - ios
     elif task == "build-pdfium-ios":

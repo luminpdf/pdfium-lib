@@ -13,12 +13,42 @@ def _depot_tools_dir():
     return os.path.abspath(os.path.join(os.getcwd(), "build", "depot-tools"))
 
 
+def _depot_tools_usable(tools_dir):
+    gn_bin = os.path.join(tools_dir, "gn")
+    if not os.path.isfile(gn_bin):
+        return False
+    try:
+        subprocess.run(
+            [gn_bin, "--version"],
+            capture_output=True,
+            check=True,
+            timeout=15,
+        )
+        return True
+    except (OSError, subprocess.CalledProcessError):
+        return False
+
+
+def prepend_pdfium_buildtools(source_dir):
+    """Prefer pdfium's pinned gn/ninja over depot_tools wrappers (Docker/Linux)."""
+    buildtools_dir = os.path.join(source_dir, "buildtools", "linux64")
+    gn_bin = os.path.join(buildtools_dir, "gn")
+    if not os.path.isfile(gn_bin):
+        return
+
+    path_entries = os.environ.get("PATH", "").split(os.pathsep)
+    if buildtools_dir not in path_entries:
+        os.environ["PATH"] = buildtools_dir + os.pathsep + os.environ.get("PATH", "")
+
+
 def ensure_depot_tools_on_path():
     """Clone depot_tools if needed and prepend to PATH (gclient, gn, ninja)."""
     tools_dir = _depot_tools_dir()
     gclient_bin = os.path.join(tools_dir, "gclient")
 
-    if not os.path.isfile(gclient_bin):
+    if os.path.isfile(gclient_bin) and _depot_tools_usable(tools_dir):
+        pass
+    elif not os.path.isfile(gclient_bin):
         l.colored("depot_tools missing; cloning into build/depot-tools...", l.YELLOW)
         build_dir = os.path.join(os.getcwd(), "build")
         f.create_dir(build_dir)
@@ -31,13 +61,20 @@ def ensure_depot_tools_on_path():
             ],
             cwd=build_dir,
         )
+    else:
+        l.colored(
+            "Skipping build/depot-tools (not runnable on this host); using PATH",
+            l.YELLOW,
+        )
+        tools_dir = None
 
     os.environ["DEPOT_TOOLS_UPDATE"] = "0"
     os.environ["DEPOT_TOOLS_WIN_TOOLCHAIN"] = "0"
 
-    path_entries = os.environ.get("PATH", "").split(os.pathsep)
-    if tools_dir not in path_entries:
-        os.environ["PATH"] = tools_dir + os.pathsep + os.environ.get("PATH", "")
+    if tools_dir and _depot_tools_usable(tools_dir):
+        path_entries = os.environ.get("PATH", "").split(os.pathsep)
+        if tools_dir not in path_entries:
+            os.environ["PATH"] = tools_dir + os.pathsep + os.environ.get("PATH", "")
 
 
 # -----------------------------------------------------------------------------

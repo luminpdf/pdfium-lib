@@ -14,10 +14,7 @@ import modules.pdfium_paths as paths
 
 # -----------------------------------------------------------------------------
 def run_task_build_pdfium():
-    p.get_pdfium_shared(
-        git_url=c.pdfium_mobile_git_url,
-        git_branch=c.pdfium_mobile_git_branch,
-    )
+    p.get_pdfium_shared()
 
 
 # -----------------------------------------------------------------------------
@@ -59,9 +56,8 @@ def run_task_patch():
 def run_task_build():
     l.colored("Building libraries...", l.YELLOW)
     cm.ensure_depot_tools_on_path()
+    cm.prepend_pdfium_buildtools(paths.pdfium_source_dir("android"))
     run_task_patch()
-
-    current_dir = f.current_dir()
 
     # configs
     for config in c.configurations_android:
@@ -72,10 +68,11 @@ def run_task_build():
             )
             pdfium_dir = paths.pdfium_source_dir("android")
             main_dir = os.path.join(pdfium_dir, "out", out_name)
+            out_dir = "out/{0}-{1}-{2}".format(
+                target["target_os"], target["target_cpu"], config
+            )
 
             f.recreate_dir(main_dir)
-
-            os.chdir(pdfium_dir)
 
             # generating files...
             l.colored(
@@ -97,12 +94,10 @@ def run_task_build():
             command = [
                 "gn",
                 "gen",
-                "out/{0}-{1}-{2}".format(
-                    target["target_os"], target["target_cpu"], config
-                ),
+                out_dir,
                 "--args='{0}'".format(args_str),
             ]
-            r.run(" ".join(command), shell=True)
+            r.run(" ".join(command), shell=True, cwd=pdfium_dir)
 
             # compiling...
             l.colored(
@@ -112,18 +107,12 @@ def run_task_build():
                 l.YELLOW,
             )
 
-            command = [
-                "ninja",
-                "-C",
-                "out/{0}-{1}-{2}".format(
-                    target["target_os"], target["target_cpu"], config
-                ),
-                "pdfium",
-                "-v",
-            ]
-            r.run(command)
-
-            os.chdir(current_dir)
+            command = ["ninja", "-C", out_dir]
+            ninja_jobs = os.environ.get("PDFIUM_NINJA_JOBS", "").split()
+            if ninja_jobs:
+                command.extend(ninja_jobs)
+            command.append("pdfium")
+            r.run(command, cwd=pdfium_dir)
 
     l.ok()
 
