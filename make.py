@@ -23,6 +23,7 @@ Tasks:
   - build-depot-tools
   - build-emsdk
 
+  - build-pdfium-shared
   - build-pdfium-ios
   - patch-ios
   - build-ios
@@ -65,6 +66,7 @@ import modules.common as common
 import modules.config as c
 import modules.ios as ios
 import modules.macos as macos
+import modules.pdfium as pdfium
 import modules.wasm as wasm
 
 
@@ -107,6 +109,13 @@ def main(options):
     #######################
     # iOS
     #######################
+
+    # build pdfium - shared mobile source (iOS + Android)
+    elif task == "build-pdfium-shared":
+        pdfium.get_pdfium_shared(
+            git_url=c.pdfium_mobile_git_url,
+            git_branch=c.pdfium_mobile_git_branch,
+        )
 
     # build pdfium - ios
     elif task == "build-pdfium-ios":

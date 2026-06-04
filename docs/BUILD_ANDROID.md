@@ -1,53 +1,58 @@
-# Build for Android
+# Build for Android (Lumin shared source)
 
-1. First, execute all steps in the [How to compile](https://github.com/paulocoutinhox/pdfium-lib/tree/master?tab=readme-ov-file#how-to-compile) section
+PDFium **source** lives in **`pdfium-lib/pdfium/`** (nested submodule). `build/android/` holds release artifacts only.
 
-2. Get PDFium:
-```python3 make.py build-pdfium-android```
+Full manual steps (Linux, Docker, low-level `gn`/`ninja`): **[BUILD_SHARED.md](BUILD_SHARED.md)**.
 
-3. Patch:
-```python3 make.py patch-android```
+## Quick path (from rn-lumin-pdf root)
 
-4. PDFium Android dependencies
-```./build/android/pdfium/build/install-build-deps-android.sh```
+```bash
+pnpm pdfium-init-shared    # once
+pnpm pdfium-build-android  # Linux native or Docker on macOS
+```
 
-5. Compile:
-```python3 make.py build-android```
+## make.py only (from `pdfium-lib/` on Linux)
 
-6. Install libraries:
-```python3 make.py install-android```
+```bash
+cd pdfium-lib
+source .venv/bin/activate
+export PDFIUM_SOURCE_DIR="$(pwd)/pdfium"
+export PATH="$PWD/build/depot-tools:$PATH"
 
-7. Test:
-```python3 make.py test-android```
+python3 make.py build-pdfium-shared   # once
+python3 make.py patch-android
+bash "$PDFIUM_SOURCE_DIR/build/install-build-deps-android.sh"   # once per machine
+python3 make.py build-android
+python3 make.py install-android
+python3 make.py test-android          # optional
+```
 
-Obs:
-- The file **make.py** need be executed with python version 3.
-- You need run all steps in a Linux machine (real, vm or docker) to it works.
-- With docker you can skip step 2.
+Output: `build/android/release/lib/<abi>/libpdfium.so`, `build/android/release/include/`
 
+Copy into the app (from repo root):
 
-## Docker
+```bash
+# or use pnpm pdfium-build-android which runs install_android_vendor
+mkdir -p android/Vendor/pdfium/lib android/Vendor/pdfium/include
+cp -R pdfium-lib/build/android/release/lib/* android/Vendor/pdfium/lib/
+cp -R pdfium-lib/build/android/release/include/* android/Vendor/pdfium/include/
+```
 
-You can use docker to build and test on local machine before deploy.
+## Docker (macOS / non-Linux)
 
-Build the image with command:
+Build image (from `pdfium-lib/docker/android`):
 
-```docker build -t pdfium-android -f docker/android/Dockerfile docker/android```
+```bash
+docker build --platform linux/amd64 -t pdfium-android-build \
+  -f docker/android/Dockerfile docker/android
+```
 
-Test with command:
+Run with **`pdfium-lib`** mounted (includes nested **`pdfium/`**); see BUILD_SHARED.md.
 
-```docker run -v ${PWD}:/app -it pdfium-android echo "test"```
+Parent wrapper: `pnpm pdfium-build-android` from rn-lumin-pdf.
 
-Now you can execute any command with pattern:
+## Notes
 
-```docker run -v ${PWD}:/app -it pdfium-android [COMMAND]```
-
-## Docker (macOS arm64)
-
-If you are in a macOS with arm64 processors (M*), build with command:
-
-```docker build --platform linux/amd64 -t pdfium-android -f docker/android/Dockerfile docker/android```
-
-and
-
-```docker run --platform linux/amd64 -v ${PWD}:/app -it pdfium-android echo "test"```
+- Run **make.py** with Python 3.
+- Real Android builds need **Linux** (or Docker).
+- Edit fork under **`pdfium/`**; reset patches when switching from iOS (BUILD_SHARED.md).

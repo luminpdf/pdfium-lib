@@ -1,27 +1,43 @@
-# Build for iOS
+# Build for iOS (Lumin shared source)
 
-1. First, execute all steps in the [How to compile](https://github.com/paulocoutinhox/pdfium-lib/tree/master?tab=readme-ov-file#how-to-compile) section
+PDFium **source** lives in **`pdfium-lib/pdfium/`** (nested submodule). `build/ios/` holds release artifacts only.
 
-2. Get PDFium:
-```python3 make.py build-pdfium-ios```
+Full manual steps: **[BUILD_SHARED.md](BUILD_SHARED.md)**.
 
-3. Patch:
-```python3 make.py patch-ios```
+## Quick path (from rn-lumin-pdf root)
 
-4. Compile:
-```python3 make.py build-ios```
+```bash
+pnpm pdfium-init-shared   # once
+pnpm pdfium-build-ios
+```
 
-5. Install libraries:
-```python3 make.py install-ios```
+## make.py only (from `pdfium-lib/`)
 
-6. Test:
-```python3 make.py test-ios```
+Prerequisites: depot tools, venv, `PDFIUM_SOURCE_DIR` pointing at `pdfium-lib/pdfium/`.
 
-Obs:
-- The file **make.py** need be executed with python version 3.
+```bash
+cd pdfium-lib
+source .venv/bin/activate
+export PDFIUM_SOURCE_DIR="$(pwd)/pdfium"
+export PATH="$PWD/build/depot-tools:$PATH"
 
-# Sample
+python3 make.py build-pdfium-shared   # once: sync DEPS into pdfium/
+python3 make.py patch-ios
+python3 make.py build-ios
+python3 make.py install-ios
+python3 make.py test-ios              # optional
+```
 
-The sample project is here: `sample-apple/Sample.xcodeproj`.
+Output: `build/ios/release/pdfium.xcframework`
 
-Copy the `pdfium.xcframework` to folder `sample-apple/Sample/Vendor`.
+Copy into the React Native app:
+
+```bash
+cp -R build/ios/release/pdfium.xcframework ../ios/Vendor/
+```
+
+## Notes
+
+- Run **make.py** with Python 3.
+- Edit fork code under **`pdfium/`**, commit to `luminpdf-mobile/main`.
+- Before building Android on the same machine, run **`pnpm pdfium-reset-patches`** (see BUILD_SHARED.md).
