@@ -3,10 +3,12 @@ import os
 from pygemstones.io import file as f
 from pygemstones.util import log as l
 
+import modules.pdfium_paths as paths
+
 
 # -----------------------------------------------------------------------------
 def apply_shared_library(target):
-    source_dir = os.path.join("build", target, "pdfium")
+    source_dir = paths.pdfium_source_dir(target)
     source_file = os.path.join(source_dir, "BUILD.gn")
 
     original_content = 'component("pdfium") {'
@@ -22,7 +24,7 @@ def apply_shared_library(target):
 
 # -----------------------------------------------------------------------------
 def apply_public_headers(target):
-    source_dir = os.path.join("build", target, "pdfium")
+    source_dir = paths.pdfium_source_dir(target)
     public_dir = os.path.join(source_dir, "public")
 
     # file: public/fpdfview.h (p1)

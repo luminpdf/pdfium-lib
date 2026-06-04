@@ -12,6 +12,9 @@ pdfium_git_branch = "main"
 pdfium_mobile_git_url = "git@github.com:luminpdf/pdfium.git"
 pdfium_mobile_git_branch = "luminpdf-mobile/main"
 
+# Shared source: pdfium-lib/pdfium submodule (override with PDFIUM_SOURCE_DIR).
+# gclient sync runs under pdfium-lib/build/shared/ (host-specific target_os).
+
 # emsdk
 emsdk_version = "4.0.15"
 # OBS 1: don't forget change in wasm docker file (docker/wasm/Dockerfile)

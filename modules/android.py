@@ -9,13 +9,12 @@ import modules.common as cm
 import modules.config as c
 import modules.patch as patch
 import modules.pdfium as p
+import modules.pdfium_paths as paths
 
 
 # -----------------------------------------------------------------------------
 def run_task_build_pdfium():
-    p.get_pdfium_by_target(
-        "android",
-        "android",
+    p.get_pdfium_shared(
         git_url=c.pdfium_mobile_git_url,
         git_branch=c.pdfium_mobile_git_branch,
     )
@@ -25,7 +24,7 @@ def run_task_build_pdfium():
 def run_task_patch():
     l.colored("Patching files...", l.YELLOW)
 
-    source_dir = os.path.join("build", "android", "pdfium")
+    source_dir = paths.pdfium_source_dir("android")
 
     # shared lib
     if c.shared_lib_android:
@@ -59,6 +58,8 @@ def run_task_patch():
 # -----------------------------------------------------------------------------
 def run_task_build():
     l.colored("Building libraries...", l.YELLOW)
+    cm.ensure_depot_tools_on_path()
+    run_task_patch()
 
     current_dir = f.current_dir()
 
@@ -66,23 +67,15 @@ def run_task_build():
     for config in c.configurations_android:
         # targets
         for target in c.targets_android:
-            main_dir = os.path.join(
-                "build",
-                target["target_os"],
-                "pdfium",
-                "out",
-                "{0}-{1}-{2}".format(target["target_os"], target["target_cpu"], config),
+            out_name = "{0}-{1}-{2}".format(
+                target["target_os"], target["target_cpu"], config
             )
+            pdfium_dir = paths.pdfium_source_dir("android")
+            main_dir = os.path.join(pdfium_dir, "out", out_name)
 
             f.recreate_dir(main_dir)
 
-            os.chdir(
-                os.path.join(
-                    "build",
-                    target["target_os"],
-                    "pdfium",
-                )
-            )
+            os.chdir(pdfium_dir)
 
             # generating files...
             l.colored(
@@ -149,7 +142,9 @@ def run_task_install():
                 target["target_os"], target["target_cpu"], config
             )
 
-            source_lib_dir = os.path.join("build", "android", "pdfium", "out", out_dir)
+            source_lib_dir = os.path.join(
+                paths.pdfium_source_dir("android"), "out", out_dir
+            )
 
             lib_dir = os.path.join("build", "android", config, "lib")
             target_dir = os.path.join(lib_dir, target["android_cpu"])
@@ -163,23 +158,10 @@ def run_task_install():
                     if os.path.isfile(pathname):
                         f.copy_file(pathname, os.path.join(target_dir, basename))
 
-            # fix include path
-            source_include_path = os.path.join(
-                "build",
-                target["target_os"],
-                "pdfium",
-                "public",
-            )
-
-            headers = f.find_files(source_include_path, "*.h", True)
-
-            for header in headers:
-                f.replace_in_file(header, '#include "public/', '#include "../')
-
         # headers
         l.colored("Copying header files...", l.YELLOW)
 
-        include_dir = os.path.join("build", "android", "pdfium", "public")
+        include_dir = os.path.join(paths.pdfium_source_dir("android"), "public")
         include_cpp_dir = os.path.join(include_dir, "cpp")
         target_include_dir = os.path.join("build", "android", config, "include")
         target_include_cpp_dir = os.path.join(target_include_dir, "cpp")
@@ -187,6 +169,10 @@ def run_task_install():
         f.recreate_dir(target_include_dir)
         f.copy_files(include_dir, target_include_dir, "*.h")
         f.copy_files(include_cpp_dir, target_include_cpp_dir, "*.h")
+
+        headers = f.find_files(target_include_dir, "*.h", True)
+        for header in headers:
+            f.replace_in_file(header, '#include "public/', '#include "../')
 
     l.ok()
 

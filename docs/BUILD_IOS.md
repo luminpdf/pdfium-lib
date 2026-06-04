@@ -1,27 +1,26 @@
 # Build for iOS
 
-1. First, execute all steps in the [How to compile](https://github.com/paulocoutinhox/pdfium-lib/tree/master?tab=readme-ov-file#how-to-compile) section
+1. First, complete [BUILD_SHARED.md](BUILD_SHARED.md) (one-time).
 
-2. Get PDFium:
-```python3 make.py build-pdfium-ios```
+2. From **`pdfium-lib/`**:
+```bash
+source .venv/bin/activate   # optional
+export PDFIUM_SOURCE_DIR="$(pwd)/pdfium"
+python3 make.py build-ios
+```
+   (`patch-ios` + compile + `install-ios` — output **`build/ios/release/pdfium.xcframework`**)
 
-3. Patch:
-```python3 make.py patch-ios```
-
-4. Compile:
-```python3 make.py build-ios```
-
-5. Install libraries:
-```python3 make.py install-ios```
-
-6. Test:
-```python3 make.py test-ios```
+3. Test (optional):
+```bash
+python3 make.py test-ios
+```
 
 Obs:
-- The file **make.py** need be executed with python version 3.
+- Run **`make.py`** with Python 3.
+- Edit fork under **`pdfium/`**; re-run **`build-ios`** to pick up changes.
+- Before Android on the same machine, reset patches — [BUILD_SHARED.md](BUILD_SHARED.md).
+- Do **not** use **`build-pdfium-ios`** with shared **`pdfium/`**.
 
-# Sample
+## Sample
 
-The sample project is here: `sample-apple/Sample.xcodeproj`.
-
-Copy the `pdfium.xcframework` to folder `sample-apple/Sample/Vendor`.
+`sample-apple/Sample.xcodeproj` — copy **`build/ios/release/pdfium.xcframework`** to **`sample-apple/Sample/Vendor`**.

@@ -49,11 +49,11 @@ ENV DEPOT_TOOLS_WIN_TOOLCHAIN=0
 RUN git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git -b main /opt/depot-tools
 ENV PATH=${PATH}:/opt/depot-tools
 
-# pdfium
+# pdfium (image warm-up; runtime builds mount repo-root pdfium/ via PDFIUM_SOURCE_DIR)
 RUN mkdir /build
 WORKDIR /build
 RUN gclient config --custom-var checkout_configuration=minimal --unmanaged git@github.com:luminpdf/pdfium.git
-RUN echo "target_os = [ 'android' ]" >> .gclient
+RUN echo "target_os = [ 'ios', 'android' ]" >> .gclient
 RUN gclient sync -r origin/luminpdf-mobile/main --no-history --shallow -j 4 || gclient sync -r origin/luminpdf-mobile/main --no-history --shallow -j 1
 
 # pdfium reset and clean directories

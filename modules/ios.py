@@ -13,22 +13,36 @@ import modules.common as cm
 import modules.config as c
 import modules.patch as patch
 import modules.pdfium as p
+import modules.pdfium_paths as paths
 
 
 # -----------------------------------------------------------------------------
 def run_task_build_pdfium():
-    p.get_pdfium_by_target(
-        "ios",
+    p.get_pdfium_shared(
         git_url=c.pdfium_mobile_git_url,
         git_branch=c.pdfium_mobile_git_branch,
     )
+
+
+def _ensure_ios_deps(source_dir):
+    rules_gni = os.path.join(source_dir, "build", "config", "ios", "rules.gni")
+    if os.path.isfile(rules_gni):
+        return
+    l.colored(
+        "PDFium iOS build/ DEPS missing; running gclient sync (build-pdfium-shared)...",
+        l.YELLOW,
+    )
+    run_task_build_pdfium()
+    if not os.path.isfile(rules_gni):
+        l.e(f"Expected {rules_gni} after gclient sync.")
 
 
 # -----------------------------------------------------------------------------
 def run_task_patch():
     l.colored("Patching files...", l.YELLOW)
 
-    source_dir = os.path.join("build", "ios", "pdfium")
+    source_dir = paths.pdfium_source_dir("ios")
+    _ensure_ios_deps(source_dir)
 
     # shared lib
     if c.shared_lib_ios:
@@ -94,6 +108,8 @@ def run_task_patch():
 # -----------------------------------------------------------------------------
 def run_task_build():
     l.colored("Building libraries...", l.YELLOW)
+    cm.ensure_depot_tools_on_path()
+    run_task_patch()
 
     current_dir = f.current_dir()
 
@@ -101,28 +117,18 @@ def run_task_build():
     for config in c.configurations_ios:
         # targets
         for target in c.targets_ios:
-            main_dir = os.path.join(
-                "build",
+            out_name = "{0}-{1}-{2}-{3}".format(
                 target["target_os"],
-                "pdfium",
-                "out",
-                "{0}-{1}-{2}-{3}".format(
-                    target["target_os"],
-                    target["target_cpu"],
-                    target["target_environment"],
-                    config,
-                ),
+                target["target_cpu"],
+                target["target_environment"],
+                config,
             )
+            pdfium_dir = paths.pdfium_source_dir("ios")
+            main_dir = os.path.join(pdfium_dir, "out", out_name)
 
             f.recreate_dir(main_dir)
 
-            os.chdir(
-                os.path.join(
-                    "build",
-                    target["target_os"],
-                    "pdfium",
-                )
-            )
+            os.chdir(pdfium_dir)
 
             # generating files...
             l.colored(
@@ -232,6 +238,8 @@ def run_task_build():
 
             os.chdir(current_dir)
 
+    run_task_install()
+
     l.ok()
 
 
@@ -247,9 +255,7 @@ def run_task_install():
         # targets
         for target in c.targets_ios:
             source_lib_path = os.path.join(
-                "build",
-                target["target_os"],
-                "pdfium",
+                paths.pdfium_source_dir("ios"),
                 "out",
                 "{0}-{1}-{2}-{3}".format(
                     target["target_os"],
@@ -272,19 +278,6 @@ def run_task_install():
             )
 
             f.copy_file(source_lib_path, target_lib_path)
-
-            # fix include path
-            source_include_path = os.path.join(
-                "build",
-                target["target_os"],
-                "pdfium",
-                "public",
-            )
-
-            headers = f.find_files(source_include_path, "*.h", True)
-
-            for header in headers:
-                f.replace_in_file(header, '#include "public/', '#include "../')
 
         # universal
         universal_libs = []
@@ -314,7 +307,7 @@ def run_task_install():
         # headers
         l.colored("Copying header files...", l.YELLOW)
 
-        include_dir = os.path.join("build", "ios", "pdfium", "public")
+        include_dir = os.path.join(paths.pdfium_source_dir("ios"), "public")
         include_cpp_dir = os.path.join(include_dir, "cpp")
         target_include_dir = os.path.join("build", "ios", config, "include")
         target_include_cpp_dir = os.path.join(target_include_dir, "cpp")
@@ -322,6 +315,10 @@ def run_task_install():
         f.recreate_dir(target_include_dir)
         f.copy_files(include_dir, target_include_dir, "*.h")
         f.copy_files(include_cpp_dir, target_include_cpp_dir, "*.h")
+
+        headers = f.find_files(target_include_dir, "*.h", True)
+        for header in headers:
+            f.replace_in_file(header, '#include "public/', '#include "../')
 
         # xcframework
         xcframework_out = os.path.join("build", "ios", config, "pdfium.xcframework")
