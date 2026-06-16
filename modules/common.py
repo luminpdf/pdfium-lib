@@ -1,4 +1,5 @@
 import os
+import platform
 import subprocess
 
 from pygemstones.io import file as f
@@ -17,6 +18,23 @@ def _depot_tools_usable(tools_dir):
     gn_bin = os.path.join(tools_dir, "gn")
     if not os.path.isfile(gn_bin):
         return False
+
+    marker = os.path.join(tools_dir, "python3_bin_reldir.txt")
+    if os.path.isfile(marker):
+        with open(marker, encoding="utf-8") as handle:
+            reldir = handle.read().strip()
+        python_bin = os.path.join(tools_dir, reldir, "python3", "bin", "python3")
+        if os.path.isfile(python_bin):
+            try:
+                subprocess.run(
+                    [python_bin, "-c", "import sys"],
+                    capture_output=True,
+                    check=True,
+                    timeout=10,
+                )
+            except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                return False
+
     try:
         subprocess.run(
             [gn_bin, "--version"],
@@ -25,24 +43,187 @@ def _depot_tools_usable(tools_dir):
             timeout=15,
         )
         return True
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return False
 
 
+def _depot_tools_bootstrapped(tools_dir):
+    gclient_bin = os.path.join(tools_dir, "gclient")
+    bootstrap_marker = os.path.join(tools_dir, "python3_bin_reldir.txt")
+    return os.path.isfile(gclient_bin) and os.path.isfile(bootstrap_marker)
+
+
+def _bootstrap_depot_tools(tools_dir):
+    ensure_bootstrap = os.path.join(tools_dir, "ensure_bootstrap")
+    if not os.path.isfile(ensure_bootstrap):
+        return
+    l.colored("Bootstrapping depot_tools...", l.YELLOW)
+    env = os.environ.copy()
+    env["DEPOT_TOOLS_UPDATE"] = "1"
+    subprocess.run(
+        [ensure_bootstrap],
+        cwd=tools_dir,
+        env=env,
+        check=False,
+        timeout=180,
+    )
+
+
+def _ninja_runs(path):
+    if not path or not os.path.isfile(path):
+        return False
+    try:
+        subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            check=True,
+            timeout=15,
+        )
+        return True
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+
+
+def _binary_description(path):
+    try:
+        result = subprocess.run(
+            ["file", "-bL", path],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        return result.stdout.strip()
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _gn_runs(path):
+    if not path or not os.path.isfile(path):
+        return False
+    try:
+        subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            check=True,
+            timeout=15,
+        )
+        return True
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+
+
+def resolve_gn_command():
+    """Return a runnable gn binary (full path), bypassing depot_tools lookup."""
+    override = os.environ.get("PDFIUM_GN", "").strip()
+    if override and _gn_runs(override):
+        return [override]
+
+    if os.environ.get("PDFIUM_DOCKER_BUILD") == "1":
+        docker_gn = "/opt/pdfium-buildtools/linux64/gn"
+        if _gn_runs(docker_gn):
+            return [docker_gn]
+
+    for bin_dir in os.environ.get("PATH", "").split(os.pathsep):
+        bin_dir = bin_dir.rstrip(os.sep)
+        if not bin_dir or os.path.basename(bin_dir) == "depot_tools":
+            continue
+        candidate = os.path.join(bin_dir, "gn")
+        if _gn_runs(candidate):
+            return [candidate]
+
+    system = platform.system()
+    if system == "Darwin":
+        buildtools_subdir = "mac"
+    elif system == "Linux":
+        buildtools_subdir = "linux64"
+    else:
+        buildtools_subdir = None
+
+    if buildtools_subdir:
+        source_dir = os.environ.get("PDFIUM_SOURCE_DIR", "")
+        if source_dir:
+            buildtools_dir = os.path.join(source_dir, "buildtools", buildtools_subdir)
+            for candidate in (
+                os.path.join(buildtools_dir, "gn", "gn"),
+                os.path.join(buildtools_dir, "gn"),
+            ):
+                if _gn_runs(candidate):
+                    return [candidate]
+
+    raise RuntimeError(
+        "No runnable gn binary found. Set PDFIUM_GN or restore buildtools/linux64."
+    )
+
+
+def resolve_ninja_command():
+    """Return a runnable ninja binary, bypassing depot_tools' third_party lookup."""
+    override = os.environ.get("PDFIUM_NINJA", "").strip()
+    if override and _ninja_runs(override):
+        return [override]
+
+    for bin_dir in os.environ.get("PATH", "").split(os.pathsep):
+        bin_dir = bin_dir.rstrip(os.sep)
+        if not bin_dir or os.path.basename(bin_dir) == "depot_tools":
+            continue
+        candidate = os.path.join(bin_dir, "ninja")
+        if _ninja_runs(candidate):
+            return [candidate]
+
+    system = platform.system()
+    if system == "Darwin":
+        buildtools_dir = os.path.join("buildtools", "mac")
+    elif system == "Linux":
+        buildtools_dir = os.path.join("buildtools", "linux64")
+    else:
+        buildtools_dir = None
+
+    if buildtools_dir:
+        source_dir = os.environ.get("PDFIUM_SOURCE_DIR", "")
+        if source_dir:
+            candidate = os.path.join(source_dir, buildtools_dir, "ninja")
+            if _ninja_runs(candidate):
+                return [candidate]
+
+    raise RuntimeError(
+        "No runnable ninja binary found. Install ninja-build or set PDFIUM_NINJA."
+    )
+
+
 def prepend_pdfium_buildtools(source_dir):
-    """Prefer pdfium's pinned gn/ninja over depot_tools wrappers (Docker/Linux)."""
-    buildtools_dir = os.path.join(source_dir, "buildtools", "linux64")
-    gn_bin = os.path.join(buildtools_dir, "gn")
-    if not os.path.isfile(gn_bin):
+    """Prefer pdfium's pinned gn/ninja over depot_tools wrappers."""
+    if os.environ.get("PDFIUM_DOCKER_BUILD") == "1":
+        buildtools_dir = "/opt/pdfium-buildtools/linux64"
+    else:
+        system = platform.system()
+        if system == "Darwin":
+            buildtools_dir = os.path.join(source_dir, "buildtools", "mac")
+        elif system == "Linux":
+            buildtools_dir = os.path.join(source_dir, "buildtools", "linux64")
+        else:
+            return
+
+    gn_paths = [
+        os.path.join(buildtools_dir, "gn", "gn"),
+        os.path.join(buildtools_dir, "gn"),
+    ]
+    gn_bin = next((p for p in gn_paths if os.path.isfile(p)), None)
+    if not gn_bin:
         return
 
+    gn_dir = os.path.dirname(gn_bin)
     path_entries = os.environ.get("PATH", "").split(os.pathsep)
-    if buildtools_dir not in path_entries:
-        os.environ["PATH"] = buildtools_dir + os.pathsep + os.environ.get("PATH", "")
+    if gn_dir not in path_entries:
+        os.environ["PATH"] = gn_dir + os.pathsep + os.environ.get("PATH", "")
 
 
 def ensure_depot_tools_on_path():
     """Clone depot_tools if needed and prepend to PATH (gclient, gn, ninja)."""
+    if os.environ.get("PDFIUM_DOCKER_BUILD") == "1":
+        os.environ["DEPOT_TOOLS_UPDATE"] = "0"
+        os.environ["DEPOT_TOOLS_WIN_TOOLCHAIN"] = "0"
+        return
+
     tools_dir = _depot_tools_dir()
     gclient_bin = os.path.join(tools_dir, "gclient")
 
@@ -61,6 +242,8 @@ def ensure_depot_tools_on_path():
             ],
             cwd=build_dir,
         )
+        if not _depot_tools_bootstrapped(tools_dir):
+            _bootstrap_depot_tools(tools_dir)
     else:
         l.colored(
             "Skipping build/depot-tools (not runnable on this host); using PATH",
@@ -95,6 +278,8 @@ def run_task_build_depot_tools():
         "depot-tools",
     ]
     r.run(command, cwd=cwd)
+
+    _bootstrap_depot_tools(tools_dir)
 
     l.colored("Execute on your terminal:", l.PURPLE)
     l.m("export PATH=$PATH:$PWD/build/depot-tools")

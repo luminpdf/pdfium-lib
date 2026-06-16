@@ -99,10 +99,11 @@ RUN apt-get install -o APT::Immediate-Configure=false -f apt \
     && dpkg --configure -a \
     && apt-get -y dist-upgrade \
     && echo n | ./build/install-build-deps.sh --android || true \
+    && mkdir -p /opt/pdfium-buildtools \
+    && cp -a /build/pdfium/buildtools/linux64 /opt/pdfium-buildtools/linux64 \
+    && cp -a /build/pdfium/third_party/llvm-build /opt/pdfium-llvm-build \
+    && cp -a /build/pdfium/third_party/android_toolchain /opt/pdfium-android-toolchain \
     && rm -rf /build
-
-# ninja
-RUN ln -nsf /opt/depot-tools/ninja-linux64 /usr/bin/ninja
 
 # dependencies
 RUN pip3 install --upgrade pip

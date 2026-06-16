@@ -55,6 +55,7 @@ def run_task_patch():
 # -----------------------------------------------------------------------------
 def run_task_build():
     l.colored("Building libraries...", l.YELLOW)
+    p.ensure_android_shared_deps()
     cm.ensure_depot_tools_on_path()
     cm.prepend_pdfium_buildtools(paths.pdfium_source_dir("android"))
     run_task_patch()
@@ -91,8 +92,7 @@ def run_task_build():
 
             args_str = " ".join(args)
 
-            command = [
-                "gn",
+            command = cm.resolve_gn_command() + [
                 "gen",
                 out_dir,
                 "--args='{0}'".format(args_str),
@@ -107,7 +107,7 @@ def run_task_build():
                 l.YELLOW,
             )
 
-            command = ["ninja", "-C", out_dir]
+            command = cm.resolve_ninja_command() + ["-C", out_dir]
             ninja_jobs = os.environ.get("PDFIUM_NINJA_JOBS", "").split()
             if ninja_jobs:
                 command.extend(ninja_jobs)

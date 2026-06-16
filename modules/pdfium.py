@@ -1,5 +1,8 @@
 import os
 import platform
+import re
+import shutil
+import subprocess
 
 from pygemstones.io import file as f
 from pygemstones.system import runner as r
@@ -62,6 +65,206 @@ def get_pdfium_shared(enable_v8=False):
         )
 
     l.ok()
+
+
+# -----------------------------------------------------------------------------
+def ensure_android_shared_deps():
+    """Fetch Android-only DEPS when the tree was synced for iOS on macOS."""
+    if platform.system() == "Linux":
+        ensure_linux_buildtools()
+        ensure_linux_host_toolchain()
+        ensure_android_toolchain()
+
+    root_pdfium = os.path.abspath(
+        paths.resolve_pdfium_source_dir() or paths.DEFAULT_ROOT_PDFIUM
+    )
+    if _android_deps_ready(root_pdfium):
+        return
+
+    l.colored(
+        "Android DEPS missing (NDK toolchain and/or LLVM runtimes); "
+        "syncing gclient (adding target_os android)...",
+        l.YELLOW,
+    )
+    l.colored(
+        "gclient sync can take several minutes (longer on Docker bind mounts).",
+        l.YELLOW,
+    )
+    cm.ensure_depot_tools_on_path()
+
+    build_dir = paths.gclient_build_dir()
+    f.create_dir(build_dir)
+    _link_gclient_pdfium_slot(build_dir, root_pdfium)
+    _ensure_gclient_has_android(build_dir)
+    _clean_pdfium_deps_before_sync(root_pdfium)
+
+    _run_gclient_sync(build_dir)
+
+    if not _android_deps_ready(root_pdfium):
+        l.e(
+            "Android DEPS still missing after gclient sync. "
+            "Run: pnpm pdfium-init-android (or python3 make.py build-pdfium-shared in Docker)"
+        )
+
+    l.colored("Android DEPS sync complete.", l.GREEN)
+
+
+# -----------------------------------------------------------------------------
+def ensure_android_toolchain():
+    """Ensure third_party/android_toolchain NDK exists (not fetched by iOS-only sync)."""
+    if platform.system() != "Linux":
+        return
+
+    root_pdfium = os.path.abspath(
+        paths.resolve_pdfium_source_dir() or paths.DEFAULT_ROOT_PDFIUM
+    )
+    if _android_toolchain_ready(root_pdfium):
+        return
+
+    l.colored(
+        "Android NDK toolchain missing under pdfium/third_party/android_toolchain "
+        "(common after an iOS build on macOS). Restoring...",
+        l.YELLOW,
+    )
+
+    if not _restore_docker_android_toolchain(root_pdfium):
+        return
+
+    l.colored("Android NDK toolchain ready.", l.GREEN)
+
+
+# -----------------------------------------------------------------------------
+def ensure_linux_buildtools():
+    """Ensure buildtools/linux64/gn exists (iOS sync on Mac only fetches buildtools/mac)."""
+    if platform.system() != "Linux":
+        return
+
+    root_pdfium = os.path.abspath(
+        paths.resolve_pdfium_source_dir() or paths.DEFAULT_ROOT_PDFIUM
+    )
+    if _linux_buildtools_ready(root_pdfium):
+        return
+
+    l.colored(
+        "Linux buildtools missing under pdfium/buildtools/linux64 "
+        "(common after an iOS build on macOS). Restoring...",
+        l.YELLOW,
+    )
+
+    if not _restore_docker_buildtools(root_pdfium):
+        l.e(
+            "Linux buildtools still missing.\n"
+            "  Fix: PDFIUM_FORCE_DOCKER_BUILD=1 pnpm pdfium-build-android"
+        )
+
+    l.colored("Linux buildtools ready.", l.GREEN)
+
+
+# -----------------------------------------------------------------------------
+def ensure_linux_host_toolchain():
+    """Ensure third_party/llvm-build clang is Linux ELF (not macOS from bind mount)."""
+    if platform.system() != "Linux":
+        return
+
+    root_pdfium = os.path.abspath(
+        paths.resolve_pdfium_source_dir() or paths.DEFAULT_ROOT_PDFIUM
+    )
+    if _linux_host_toolchain_ready(root_pdfium):
+        return
+
+    clang_path = _llvm_clang_path(root_pdfium)
+    if os.path.isfile(clang_path):
+        description = _clang_binary_description(clang_path)
+    else:
+        description = "(missing)"
+
+    l.colored(
+        "Wrong or missing Linux Chromium clang at {} ({}). "
+        "This often happens when pdfium/ was synced on macOS for iOS. "
+        "Re-syncing DEPS for Android...".format(clang_path, description),
+        l.YELLOW,
+    )
+
+    if not _restore_docker_llvm_cache(root_pdfium):
+        llvm_build = os.path.join(root_pdfium, "third_party", "llvm-build")
+        if os.path.isdir(llvm_build):
+            f.remove_dir(llvm_build)
+
+        cm.ensure_depot_tools_on_path()
+
+        build_dir = paths.gclient_build_dir()
+        f.create_dir(build_dir)
+        _link_gclient_pdfium_slot(build_dir, root_pdfium)
+        _ensure_gclient_android_only(build_dir)
+        _clean_pdfium_deps_before_sync(root_pdfium)
+
+        l.colored(
+            "gclient sync can take several minutes (longer on Docker bind mounts).",
+            l.YELLOW,
+        )
+        _run_gclient_sync(build_dir)
+
+    if not _linux_host_toolchain_ready(root_pdfium):
+        l.e(
+            "Linux Chromium clang still wrong after gclient sync.\n"
+            "  Check: file {}\n"
+            "  Fix: rm -rf pdfium/third_party/llvm-build && "
+            "PDFIUM_FORCE_DOCKER_BUILD=1 pnpm pdfium-build-android".format(clang_path)
+        )
+
+    l.colored("Linux host toolchain ready.", l.GREEN)
+
+
+# -----------------------------------------------------------------------------
+def ensure_ios_host_toolchain():
+    """Ensure third_party/llvm-build clang matches this Mac (not Linux from Docker sync)."""
+    if platform.system() != "Darwin":
+        return
+
+    root_pdfium = os.path.abspath(
+        paths.resolve_pdfium_source_dir() or paths.DEFAULT_ROOT_PDFIUM
+    )
+    if _ios_host_toolchain_ready(root_pdfium):
+        return
+
+    clang_path = _llvm_clang_path(root_pdfium)
+    if os.path.isfile(clang_path):
+        description = _clang_binary_description(clang_path)
+    else:
+        description = "(missing)"
+
+    l.colored(
+        "Wrong or missing macOS Chromium clang at {} ({}). "
+        "This often happens after gclient sync in Linux/Docker. "
+        "Re-syncing DEPS for iOS...".format(clang_path, description),
+        l.YELLOW,
+    )
+
+    llvm_build = os.path.join(root_pdfium, "third_party", "llvm-build")
+    if os.path.isdir(llvm_build):
+        f.remove_dir(llvm_build)
+
+    cm.ensure_depot_tools_on_path()
+
+    build_dir = paths.gclient_build_dir()
+    f.create_dir(build_dir)
+    _link_gclient_pdfium_slot(build_dir, root_pdfium)
+    _ensure_gclient_ios_only(build_dir)
+    _clean_pdfium_deps_before_sync(root_pdfium)
+
+    l.colored("gclient sync can take several minutes.", l.YELLOW)
+    _run_gclient_sync(build_dir)
+
+    if not _ios_host_toolchain_ready(root_pdfium):
+        l.e(
+            "macOS Chromium clang still wrong after gclient sync.\n"
+            "  Check: file {}\n"
+            "  Fix: rm -rf pdfium/third_party/llvm-build && pnpm pdfium-init".format(
+                clang_path
+            )
+        )
+
+    l.colored("iOS host toolchain ready.", l.GREEN)
 
 
 # -----------------------------------------------------------------------------
@@ -188,6 +391,276 @@ def _shared_target_os_list():
     if platform.system() == "Darwin":
         return ["ios"]
     return ["android"]
+
+
+def _android_llvm_deps_ready(root_pdfium):
+    import glob
+
+    pattern = os.path.join(
+        root_pdfium,
+        "third_party",
+        "llvm-build",
+        "Release+Asserts",
+        "lib",
+        "clang",
+        "*",
+        "lib",
+        "linux",
+    )
+    return bool(glob.glob(pattern))
+
+
+def _android_toolchain_sysroot_header(root_pdfium):
+    return os.path.join(
+        root_pdfium,
+        "third_party",
+        "android_toolchain",
+        "ndk",
+        "toolchains",
+        "llvm",
+        "prebuilt",
+        "linux-x86_64",
+        "sysroot",
+        "usr",
+        "include",
+        "alloca.h",
+    )
+
+
+def _android_toolchain_ready(root_pdfium):
+    return os.path.isfile(_android_toolchain_sysroot_header(root_pdfium))
+
+
+def _android_deps_ready(root_pdfium):
+    return _android_llvm_deps_ready(root_pdfium) and _android_toolchain_ready(
+        root_pdfium
+    )
+
+
+def _docker_android_toolchain_cache_dir():
+    return "/opt/pdfium-android-toolchain"
+
+
+def _restore_docker_android_toolchain(root_pdfium):
+    cache_dir = _docker_android_toolchain_cache_dir()
+    if not os.path.isdir(cache_dir):
+        return False
+
+    if _android_toolchain_ready(root_pdfium):
+        return True
+
+    l.colored(
+        "Restoring Android NDK toolchain from Docker image cache...",
+        l.YELLOW,
+    )
+    dest = os.path.join(root_pdfium, "third_party", "android_toolchain")
+    if os.path.isdir(dest):
+        f.remove_dir(dest)
+
+    shutil.copytree(cache_dir, dest, symlinks=True)
+    return _android_toolchain_ready(root_pdfium)
+
+
+def _llvm_clang_path(root_pdfium):
+    return os.path.join(
+        root_pdfium,
+        "third_party",
+        "llvm-build",
+        "Release+Asserts",
+        "bin",
+        "clang++",
+    )
+
+
+def _clang_binary_description(clang_path):
+    try:
+        result = subprocess.run(
+            ["file", "-bL", clang_path],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        return result.stdout.strip()
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _expected_mac_clang_arch():
+    machine = platform.machine().lower()
+    if machine == "arm64":
+        return "arm64"
+    if machine in ("x86_64", "amd64"):
+        return "x86_64"
+    return machine
+
+
+def _ios_host_toolchain_ready(root_pdfium):
+    clang_path = _llvm_clang_path(root_pdfium)
+    if not os.path.isfile(clang_path) or not os.access(clang_path, os.X_OK):
+        return False
+
+    description = _clang_binary_description(clang_path)
+    if "Mach-O" not in description:
+        return False
+
+    expected_arch = _expected_mac_clang_arch()
+    return expected_arch in description
+
+
+def _linux_host_toolchain_ready(root_pdfium):
+    clang_path = _llvm_clang_path(root_pdfium)
+    if not os.path.isfile(clang_path) or not os.access(clang_path, os.X_OK):
+        return False
+
+    description = _clang_binary_description(clang_path)
+    if "ELF" not in description:
+        return False
+
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        return "x86-64" in description
+    if machine == "aarch64":
+        return "aarch64" in description or "ARM" in description
+    return True
+
+
+def _linux_gn_paths(root_pdfium):
+    buildtools = os.path.join(root_pdfium, "buildtools", "linux64")
+    return [
+        os.path.join(buildtools, "gn", "gn"),
+        os.path.join(buildtools, "gn"),
+    ]
+
+
+def _linux_buildtools_ready(root_pdfium):
+    for gn_path in _linux_gn_paths(root_pdfium):
+        if not os.path.isfile(gn_path) or not os.access(gn_path, os.X_OK):
+            continue
+        if "ELF" in _clang_binary_description(gn_path):
+            return True
+    return False
+
+
+def _docker_buildtools_cache_dir():
+    return "/opt/pdfium-buildtools/linux64"
+
+
+def _restore_docker_buildtools(root_pdfium):
+    cache_dir = _docker_buildtools_cache_dir()
+    if not os.path.isdir(cache_dir):
+        return False
+
+    if _linux_buildtools_ready(root_pdfium):
+        return True
+
+    l.colored(
+        "Restoring Linux buildtools from Docker image cache...",
+        l.YELLOW,
+    )
+    dest = os.path.join(root_pdfium, "buildtools", "linux64")
+    if os.path.isdir(dest):
+        f.remove_dir(dest)
+
+    os.makedirs(os.path.join(root_pdfium, "buildtools"), exist_ok=True)
+    shutil.copytree(cache_dir, dest, symlinks=True)
+    return _linux_buildtools_ready(root_pdfium)
+
+
+def _docker_llvm_cache_dir():
+    return "/opt/pdfium-llvm-build"
+
+
+def _restore_docker_llvm_cache(root_pdfium):
+    cache_dir = _docker_llvm_cache_dir()
+    if not os.path.isdir(cache_dir):
+        return False
+
+    clang_path = _llvm_clang_path(root_pdfium)
+    if _linux_host_toolchain_ready(root_pdfium):
+        return True
+
+    l.colored(
+        "Restoring Linux llvm-build from Docker image cache...",
+        l.YELLOW,
+    )
+    llvm_build = os.path.join(root_pdfium, "third_party", "llvm-build")
+    if os.path.isdir(llvm_build):
+        f.remove_dir(llvm_build)
+
+    shutil.copytree(cache_dir, llvm_build, symlinks=True)
+    return _linux_host_toolchain_ready(root_pdfium)
+
+
+def _run_gclient_sync(build_dir):
+    r.run(
+        ["gclient", "sync", "--no-history", "--shallow"],
+        cwd=build_dir,
+    )
+
+
+def _ensure_gclient_ios_only(build_dir, enable_v8=False):
+    gclient_file = os.path.join(build_dir, ".gclient")
+    if not os.path.isfile(gclient_file):
+        _configure_shared_gclient(build_dir, enable_v8)
+        return
+
+    if _read_gclient_target_os(gclient_file) == {"ios"}:
+        return
+
+    _write_gclient_target_os(gclient_file, {"ios"})
+
+
+def _ensure_gclient_android_only(build_dir, enable_v8=False):
+    gclient_file = os.path.join(build_dir, ".gclient")
+    if not os.path.isfile(gclient_file):
+        _configure_shared_gclient(build_dir, enable_v8)
+        return
+
+    if _read_gclient_target_os(gclient_file) == {"android"}:
+        return
+
+    _write_gclient_target_os(gclient_file, {"android"})
+
+
+def _read_gclient_target_os(gclient_file):
+    with open(gclient_file, encoding="utf-8") as handle:
+        content = handle.read()
+    match = re.search(r"target_os\s*=\s*\[(.*?)\]", content, re.DOTALL)
+    if not match:
+        return set()
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+def _write_gclient_target_os(gclient_file, targets):
+    with open(gclient_file, encoding="utf-8") as handle:
+        content = handle.read()
+    new_line = "target_os = [ {} ]".format(
+        ", ".join(f'"{target}"' for target in sorted(targets))
+    )
+    if re.search(r"target_os\s*=", content):
+        content = re.sub(r"target_os\s*=\s*\[[^\]]*\]", new_line, content)
+    else:
+        content = content.rstrip() + "\n" + new_line + "\n"
+    with open(gclient_file, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+
+def _ensure_gclient_has_android(build_dir, enable_v8=False):
+    gclient_file = os.path.join(build_dir, ".gclient")
+    if not os.path.isfile(gclient_file):
+        _configure_shared_gclient(build_dir, enable_v8)
+        if "android" not in _read_gclient_target_os(gclient_file):
+            targets = _read_gclient_target_os(gclient_file) | {"android"}
+            _write_gclient_target_os(gclient_file, targets)
+        return
+
+    targets = _read_gclient_target_os(gclient_file)
+    if "android" in targets:
+        return
+
+    targets.add("android")
+    _write_gclient_target_os(gclient_file, targets)
 
 
 # -----------------------------------------------------------------------------
