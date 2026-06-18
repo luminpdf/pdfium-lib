@@ -44,6 +44,8 @@ def run_task_patch():
     # shared lib
     if c.shared_lib_ios:
         patch.apply_shared_library("ios")
+    else:
+        patch.apply_static_library("ios")
 
     # public headers
     if c.shared_lib_ios:
@@ -105,7 +107,9 @@ def run_task_patch():
 # -----------------------------------------------------------------------------
 def run_task_build():
     l.colored("Building libraries...", l.YELLOW)
+    p.ensure_ios_host_toolchain()
     cm.ensure_depot_tools_on_path()
+    cm.prepend_pdfium_buildtools(paths.pdfium_source_dir("ios"))
     run_task_patch()
 
     current_dir = f.current_dir()
@@ -145,8 +149,7 @@ def run_task_build():
 
             args_str = " ".join(args)
 
-            command = [
-                "gn",
+            command = cm.resolve_gn_command() + [
                 "gen",
                 "out/{0}-{1}-{2}-{3}".format(
                     target["target_os"],
