@@ -167,6 +167,30 @@ def get_build_args(
         # static lib
         if not shared:
             args.append("pdf_is_complete_lib=true")
+    elif target_os == "win":
+        args.append("clang_use_chrome_plugins=false")
+        args.append("pdf_is_standalone=true")
+
+        # IMPORTANT: define FPDF_IMPLEMENTATION for the pdfium target.
+        #
+        # After patch.apply_public_headers("windows") strips the
+        # COMPONENT_BUILD guard from public/fpdfview.h, on WIN32 FPDF_EXPORT
+        # resolves to:
+        #     __declspec(dllexport)  when FPDF_IMPLEMENTATION is defined
+        #     __declspec(dllimport)  otherwise
+        #
+        # PDFium's BUILD.gn only defines FPDF_IMPLEMENTATION via the
+        # `pdfium_implementation_config` config, which is attached to the
+        # `pdfium_public_headers` *group* — NOT to the `pdfium` target that
+        # the shared-library patch renames from component("pdfium"). That
+        # target depends on `pdfium_public_headers_impl` directly, so the
+        # define is absent and every symbol would compile as dllimport,
+        # exporting ZERO symbols from the DLL.
+        #
+        # We force the define globally via extra_cflags so the dllexport
+        # branch is taken when the DLL's own translation units are compiled.
+        args.append('extra_cflags="/DFPDF_IMPLEMENTATION"')
+
     elif target_os.startswith("emscripten"):
         args.append("pdf_is_complete_lib=true")
         args.append("is_clang=false")

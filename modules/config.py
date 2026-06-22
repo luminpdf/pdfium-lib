@@ -12,6 +12,10 @@ pdfium_git_branch = "main"
 pdfium_mobile_git_url = "git@github.com:luminpdf/pdfium.git"
 pdfium_mobile_git_branch = "luminpdf-mobile/main"
 
+# Windows uses a custom fork instead of the upstream Google mirror
+pdfium_win_git_url = "git@github.com:luminpdf/pdfium.git"
+pdfium_win_git_branch = "luminpdf/main"
+
 # emsdk
 emsdk_version = "4.0.15"
 # OBS 1: don't forget change in wasm docker file (docker/wasm/Dockerfile)
@@ -22,6 +26,16 @@ shared_lib_macos = False
 targets_macos = [
     {"target_os": "macos", "target_cpu": "x64", "pdfium_os": "mac"},
     {"target_os": "macos", "target_cpu": "arm64", "pdfium_os": "mac"},
+]
+
+# windows
+configurations_windows = ["release"]
+shared_lib_windows = True
+# ^ DLL build (required so the shared-library + dllexport patches run).
+# x64 ONLY: FPDF_CALLCONV is __stdcall; pdfium-render bindings are extern "C",
+# which matches the calling convention only on x64 (mismatches x86).
+targets_windows = [
+    {"target_os": "win", "target_cpu": "x64", "pdfium_os": "win"},
 ]
 
 # ios
