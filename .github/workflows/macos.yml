@@ -1,11 +1,7 @@
 name: macOS
 
 on:
-  push:
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'extras/images/**'
+  workflow_dispatch:
 
 jobs:
   build:

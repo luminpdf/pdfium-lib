@@ -4,16 +4,6 @@ permissions:
   contents: read
 
 on:
-  push:
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'extras/images/**'
-  pull_request:
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'extras/images/**'
   workflow_dispatch:
     inputs:
       pdfium_ref:
@@ -35,7 +25,7 @@ jobs:
         uses: ./.github/actions/pdfium-build
         with:
           platform: ios
-          pdfium_ref: ${{ github.event_name == 'workflow_dispatch' && inputs.pdfium_ref || '' }}
+          pdfium_ref: ${{ inputs.pdfium_ref }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Save artifact
@@ -43,4 +33,4 @@ jobs:
         with:
           name: artifact-ios
           path: ios.tgz
-          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
+          retention-days: 30
