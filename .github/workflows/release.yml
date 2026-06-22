@@ -1,0 +1,184 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [iOS, Android]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (without leading v)
+        required: false
+        default: "1.0.0"
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish mobile prebuilts
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event != 'pull_request'
+      )
+    steps:
+      - name: Resolve source commit
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "manual=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+            echo "manual=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for both platform builds
+        if: steps.source.outputs.manual != 'true'
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          ios_status=$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow=ios.yml \
+            --commit="$SHA" \
+            --limit=1 \
+            --json conclusion \
+            -q '.[0].conclusion // "none"')
+
+          android_status=$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow=android.yml \
+            --commit="$SHA" \
+            --limit=1 \
+            --json conclusion \
+            -q '.[0].conclusion // "none"')
+
+          echo "iOS: $ios_status, Android: $android_status"
+
+          if [ "$ios_status" != "success" ] || [ "$android_status" != "success" ]; then
+            echo "Both platform builds must succeed before publishing."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          ios_run=$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow=ios.yml \
+            --commit="$SHA" \
+            --status=success \
+            --limit=1 \
+            --json databaseId \
+            -q '.[0].databaseId')
+
+          android_run=$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow=android.yml \
+            --commit="$SHA" \
+            --status=success \
+            --limit=1 \
+            --json databaseId \
+            -q '.[0].databaseId')
+
+          echo "ios_run=$ios_run" >> "$GITHUB_OUTPUT"
+          echo "android_run=$android_run" >> "$GITHUB_OUTPUT"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout for tag lookup
+        if: (steps.source.outputs.manual == 'true' || steps.gate.outputs.ready == 'true') && github.event_name == 'workflow_run'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Resolve release version
+        if: steps.source.outputs.manual == 'true' || steps.gate.outputs.ready == 'true'
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ver="${{ inputs.version }}"
+          else
+            tag=$(git tag --points-at HEAD 2>/dev/null | head -1 || true)
+            if [ -n "$tag" ]; then
+              ver="${tag#v}"
+            else
+              ver="1.0.0"
+            fi
+          fi
+
+          ver="${ver#v}"
+          if [ -z "$ver" ]; then
+            ver="1.0.0"
+          fi
+
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Publishing v${ver} for commit ${{ steps.source.outputs.sha }}"
+
+      - name: Download iOS artifact
+        if: steps.source.outputs.manual == 'true' || steps.gate.outputs.ready == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.source.outputs.manual }}" = "true" ]; then
+            run_id=$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow=ios.yml \
+              --commit="${{ steps.source.outputs.sha }}" \
+              --status=success \
+              --limit=1 \
+              --json databaseId \
+              -q '.[0].databaseId')
+          else
+            run_id="${{ steps.gate.outputs.ios_run }}"
+          fi
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" -n artifact-ios
+
+      - name: Download Android artifact
+        if: steps.source.outputs.manual == 'true' || steps.gate.outputs.ready == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.source.outputs.manual }}" = "true" ]; then
+            run_id=$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow=android.yml \
+              --commit="${{ steps.source.outputs.sha }}" \
+              --status=success \
+              --limit=1 \
+              --json databaseId \
+              -q '.[0].databaseId')
+          else
+            run_id="${{ steps.gate.outputs.android_run }}"
+          fi
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" -n artifact-android -D android-artifact
+          mv android-artifact/android.tgz ./android.tgz
+
+      - name: Publish release
+        if: steps.source.outputs.manual == 'true' || steps.gate.outputs.ready == 'true'
+        uses: ./.github/actions/pdfium-publish
+        with:
+          version: ${{ steps.version.outputs.version }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}

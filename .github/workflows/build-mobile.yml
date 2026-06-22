@@ -1,0 +1,85 @@
+name: Build Mobile
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (e.g. 1.0.0). Empty uses 1.0.0 and overwrites v1.0.0
+        required: false
+        default: "1.0.0"
+        type: string
+      pdfium_ref:
+        description: pdfium branch, tag, or SHA (luminpdf/pdfium)
+        required: false
+        default: luminpdf-mobile/main
+        type: string
+
+concurrency:
+  group: build-mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    name: iOS
+    runs-on: macos-15
+    steps:
+      - name: Build PDFium for iOS
+        uses: ./.github/actions/pdfium-build
+        with:
+          platform: ios
+          pdfium_ref: ${{ inputs.pdfium_ref }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-ios
+          path: ios.tgz
+          retention-days: 30
+
+  build-android:
+    name: Android
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Build PDFium for Android
+        uses: ./.github/actions/pdfium-build
+        with:
+          platform: android
+          pdfium_ref: ${{ inputs.pdfium_ref }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-android
+          path: android.tgz
+          retention-days: 30
+
+  release:
+    name: Publish
+    needs: [build-ios, build-android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifact-*
+          merge-multiple: true
+
+      - name: Verify archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ios.tgz
+          test -f android.tgz
+
+      - name: Publish release
+        uses: ./.github/actions/pdfium-publish
+        with:
+          version: ${{ inputs.version }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}

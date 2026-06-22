@@ -1,0 +1,57 @@
+name: PDFium Publish
+description: Create or update a GitHub Release with ios.tgz and android.tgz
+
+inputs:
+  version:
+    description: Release version without leading v (e.g. 1.0.0)
+    required: true
+  github_token:
+    description: GitHub token with contents write
+    required: true
+  pdfium_short_sha:
+    description: Optional pdfium commit short SHA for release notes
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve release tag
+      id: release
+      shell: bash
+      env:
+        VERSION_INPUT: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        ver="${VERSION_INPUT:-1.0.0}"
+        ver="${ver#v}"
+        if [ -z "$ver" ]; then
+          ver="1.0.0"
+        fi
+        echo "tag=v${ver}" >> "$GITHUB_OUTPUT"
+        echo "version=${ver}" >> "$GITHUB_OUTPUT"
+
+    - name: Publish GitHub Release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        TAG: ${{ steps.release.outputs.tag }}
+        VERSION: ${{ steps.release.outputs.version }}
+        PDFIUM_SHA: ${{ inputs.pdfium_short_sha }}
+      run: |
+        set -euo pipefail
+
+        notes="PDFium mobile prebuilts ${TAG}"
+        if [ -n "$PDFIUM_SHA" ]; then
+          notes="${notes} (pdfium @ ${PDFIUM_SHA})"
+        fi
+
+        if gh release view "$TAG" >/dev/null 2>&1; then
+          echo "Updating existing release $TAG"
+        else
+          gh release create "$TAG" \
+            --title "PDFium ${TAG}" \
+            --notes "$notes"
+        fi
+
+        gh release upload "$TAG" ios.tgz android.tgz --clobber
