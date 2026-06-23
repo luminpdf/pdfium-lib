@@ -40,7 +40,13 @@ def get_pdfium_by_target(
     if not enable_v8:
         config_args.extend(["--custom-var", "checkout_configuration=minimal"])
 
-    r.run(config_args, cwd=build_dir)
+    # Run via shell=True with a space-joined string. depot_tools' gclient is a
+    # .bat wrapper on Windows; subprocess without a shell cannot launch a .bat
+    # (CreateProcess only auto-appends .exe). shell=True lets cmd.exe resolve it
+    # via PATHEXT, and is cross-platform safe (POSIX /bin/sh -c handles the same
+    # string). The args are simple flags/URLs with no spaces or shell
+    # metacharacters, so joining with spaces is safe.
+    r.run(" ".join(config_args), cwd=build_dir, shell=True)
 
     # append target os
     if append_target_os:
@@ -52,16 +58,13 @@ def get_pdfium_by_target(
         f.append_to_file(gclient_file, "target_os = [ '{}' ]".format(target))
 
     l.colored(f"Syncing repository with branch {resolved_branch}...", l.YELLOW)
+    # shell=True with a space-joined string for the same .bat reason as the
+    # gclient config call above (cross-platform safe; POSIX /bin/sh handles the
+    # same string). Simple flag args, safe to join.
     r.run(
-        [
-            "gclient",
-            "sync",
-            "-r",
-            f"origin/{resolved_branch}",
-            "--no-history",
-            "--shallow",
-        ],
+        " ".join(["gclient", "sync", "-r", f"origin/{resolved_branch}", "--no-history", "--shallow"]),
         cwd=build_dir,
+        shell=True,
     )
 
     # reset and clean directories

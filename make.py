@@ -37,6 +37,12 @@ Tasks:
   - test-macos
   - archive-macos
 
+  - build-pdfium-windows
+  - patch-windows
+  - build-windows
+  - install-windows
+  - archive-windows
+
   - build-pdfium-android
   - patch-android
   - build-android
@@ -66,6 +72,7 @@ import modules.config as c
 import modules.ios as ios
 import modules.macos as macos
 import modules.wasm as wasm
+import modules.windows as windows
 
 
 def main(options):
@@ -159,6 +166,30 @@ def main(options):
     # archive - macos
     elif task == "archive-macos":
         macos.run_task_archive()
+
+    #######################
+    # Windows
+    #######################
+
+    # build pdfium - windows
+    elif task == "build-pdfium-windows":
+        windows.run_task_build_pdfium()
+
+    # patch - windows
+    elif task == "patch-windows":
+        windows.run_task_patch()
+
+    # build - windows
+    elif task == "build-windows":
+        windows.run_task_build()
+
+    # install - windows
+    elif task == "install-windows":
+        windows.run_task_install()
+
+    # archive - windows
+    elif task == "archive-windows":
+        windows.run_task_archive()
 
     #######################
     # Android
