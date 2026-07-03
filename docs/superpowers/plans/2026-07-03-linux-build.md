@@ -13,7 +13,8 @@
 - PDFium branch is pinned to `chromium/7623` (`modules/config.py: pdfium_git_branch`) — do not change it as part of this work.
 - No V8/XFA support — do not pass `enable_v8=True` anywhere for the Linux target, matching every other platform's default.
 - No `docker/linux/Dockerfile` — out of scope per the design spec (`docs/superpowers/specs/2026-07-03-linux-build-design.md`); local dev/testing uses the existing OrbStack VM instead.
-- Build/patch/install/test/archive steps that involve actually running `gclient`/`gn`/`ninja` cannot be run on this machine directly (it's macOS) — they must be run inside the OrbStack Linux VM named `my-build-vm` (Ubuntu 22.04 jammy, arm64), reachable via `orb run -m my-build-vm bash -c "<command>"`, with this repo visible inside the VM at `/mnt/mac/Users/dangminhhoanglong/emdash/worktrees/pdfium-lib/emdash/linux-build-iqgr7`.
+- Build/patch/install/test/archive steps that involve actually running `gclient`/`gn`/`ninja` cannot be run on this machine directly (it's macOS) — they must be run inside the OrbStack Linux VM named `pdfium-linux-build` (Ubuntu 22.04 jammy, **amd64**, emulated via OrbStack's `-a amd64` on this Apple Silicon host), reachable via `orb run -m pdfium-linux-build bash -c "<command>"`, with this repo visible inside the VM at `/mnt/mac/Users/dangminhhoanglong/emdash/worktrees/pdfium-lib/emdash/linux-build-iqgr7`. **Do not use the pre-existing `my-build-vm` (arm64)** — PDFium's `DEPS` unconditionally fetches a `buildtools/reclient` CIPD package that has no `linux-arm64` build for the pinned version, so `gclient sync` fails outright on an arm64 Linux host regardless of target arch. This was discovered empirically during Task 3's first attempt; amd64 avoids it entirely and also matches GitHub Actions' `ubuntu-24.04` runner architecture used in CI (Task 7).
+- Fresh packages are needed on `pdfium-linux-build` (unlike `my-build-vm`, which had prior setup) — `git`, `ninja-build`, `cmake`, `python3-pip` are not preinstalled; only `curl` is present by default.
 - **Do not build directly on the `/mnt/mac/...` path.** It's a virtiofs mount from macOS; PDFium's checkout is hundreds of thousands of small files, and building across that mount is dramatically slower than the VM's native disk. Every VM-side task below clones/copies the repo into `~/linux-build` inside the VM first, and copies only the finished `build/linux/` output (and any modified source files) back out through the mount.
 - Every task that changes a tracked file ends with a `git commit`, run from this macOS checkout (not from inside the VM).
 
@@ -418,7 +419,7 @@ git commit -m "Add Linux build module and wire it into make.py"
 **Files:** none (environment setup + a real PDFium checkout inside the VM; no repo files change in this task).
 
 **Interfaces:**
-- Produces: a working copy of this repo at `~/linux-build` inside `my-build-vm`, with `build/depot-tools` and `build/linux/pdfium` populated — consumed by Task 4 (arm64 build spike) and Task 5 (x64 build spike), which run inside that same VM checkout.
+- Produces: a working copy of this repo at `~/linux-build` inside `pdfium-linux-build`, with `build/depot-tools` and `build/linux/pdfium` populated — consumed by Task 4 (arm64 build spike) and Task 5 (x64 build spike), which run inside that same VM checkout.
 
 This is the first task that actually exercises the VM. Its job is to validate the checkout mechanics (Task 1/2's code assumes `p.get_pdfium_by_target` and the sysroot script both work as expected) before Task 4 attempts a real compile.
 
@@ -427,7 +428,7 @@ This is the first task that actually exercises the VM. Its job is to validate th
 Run (from this macOS checkout):
 
 ```bash
-orb run -m my-build-vm bash -c "rm -rf ~/linux-build && cp -r /mnt/mac/Users/dangminhhoanglong/emdash/worktrees/pdfium-lib/emdash/linux-build-iqgr7 ~/linux-build"
+orb run -m pdfium-linux-build bash -c "rm -rf ~/linux-build && cp -r /mnt/mac/Users/dangminhhoanglong/emdash/worktrees/pdfium-lib/emdash/linux-build-iqgr7 ~/linux-build"
 ```
 
 Expected: exits 0. This copies the current state of the repo (including Tasks 1-2's changes, once committed) into the VM's own disk.
@@ -437,17 +438,17 @@ Expected: exits 0. This copies the current state of the repo (including Tasks 1-
 Run:
 
 ```bash
-orb run -m my-build-vm bash -c "sudo apt-get update && sudo apt-get install -y python3-pip lsb-release"
+orb run -m pdfium-linux-build bash -c "sudo apt-get update && sudo apt-get install -y python3-pip lsb-release git ninja-build cmake"
 ```
 
-Expected: exits 0 (packages already present is fine — `git`, `ninja-build`, `cmake` were already confirmed present on this VM).
+Expected: exits 0. Unlike `my-build-vm`, this VM only ships `curl` by default, so `git`/`ninja-build`/`cmake` genuinely need installing here (not just a no-op).
 
 - [ ] **Step 3: Install Python requirements**
 
 Run:
 
 ```bash
-orb run -m my-build-vm bash -c "cd ~/linux-build && python3 -m pip install -r requirements.txt --user"
+orb run -m pdfium-linux-build bash -c "cd ~/linux-build && python3 -m pip install -r requirements.txt --user"
 ```
 
 Expected: exits 0, installs `docopt`, `black`, `pygemstones`, `wasmtime` without error.
@@ -457,13 +458,13 @@ Expected: exits 0, installs `docopt`, `black`, `pygemstones`, `wasmtime` without
 Run:
 
 ```bash
-orb run -m my-build-vm bash -c "cd ~/linux-build && python3 make.py build-depot-tools"
+orb run -m pdfium-linux-build bash -c "cd ~/linux-build && python3 make.py build-depot-tools"
 ```
 
 Expected: exits 0; `~/linux-build/build/depot-tools` exists afterward. Verify with:
 
 ```bash
-orb run -m my-build-vm bash -c "test -d ~/linux-build/build/depot-tools/gclient && echo FOUND"
+orb run -m pdfium-linux-build bash -c "test -d ~/linux-build/build/depot-tools/gclient && echo FOUND"
 ```
 Expected output: `FOUND`.
 
@@ -472,7 +473,7 @@ Expected output: `FOUND`.
 Run:
 
 ```bash
-orb run -m my-build-vm bash -c "cd ~/linux-build && export PATH=\$PATH:\$PWD/build/depot-tools && python3 make.py build-pdfium-linux"
+orb run -m pdfium-linux-build bash -c "cd ~/linux-build && export PATH=\$PATH:\$PWD/build/depot-tools && python3 make.py build-pdfium-linux"
 ```
 
 This will take a while (PDFium + its third-party deps, shallow-cloned, plus two `install-sysroot.py` invocations). Let it run to completion rather than interrupting it.
@@ -480,7 +481,7 @@ This will take a while (PDFium + its third-party deps, shallow-cloned, plus two 
 Expected: exits 0. If `install-sysroot.py` fails with a "file not found" style error for the script path, run:
 
 ```bash
-orb run -m my-build-vm bash -c "find ~/linux-build/build/linux/pdfium/build -iname 'install-sysroot.py'"
+orb run -m pdfium-linux-build bash -c "find ~/linux-build/build/linux/pdfium/build -iname 'install-sysroot.py'"
 ```
 
 and update the path used in `modules/linux.py`'s `run_task_build_pdfium` (in this macOS checkout) to whatever path this reveals, then re-copy the repo into the VM (Step 1) and re-run this step.
@@ -490,7 +491,7 @@ and update the path used in `modules/linux.py`'s `run_task_build_pdfium` (in thi
 Run:
 
 ```bash
-orb run -m my-build-vm bash -c "test -f ~/linux-build/build/linux/pdfium/BUILD.gn && echo CHECKOUT_OK && ls ~/linux-build/build/linux/pdfium/build/linux/ | grep -i sysroot"
+orb run -m pdfium-linux-build bash -c "test -f ~/linux-build/build/linux/pdfium/BUILD.gn && echo CHECKOUT_OK && ls ~/linux-build/build/linux/pdfium/build/linux/ | grep -i sysroot"
 ```
 
 Expected: prints `CHECKOUT_OK` followed by at least one directory name containing `sysroot` (confirms both the checkout and at least one sysroot are present; if only one arch's sysroot directory appears, note which one in the commit message for Task 4/5 to investigate).
@@ -511,28 +512,28 @@ If nothing changed, skip committing for this task.
 
 ---
 
-### Task 4: arm64 build spike (native compile on the VM)
+### Task 4: x64 build spike (native compile on the VM)
 
 **Files:** none expected, unless Step 4 reveals a required code change (see below).
 
 **Interfaces:**
 - Consumes: the VM checkout from Task 3, `linux.run_task_patch()` and `linux.run_task_build()` from Task 2.
-- Produces: a working `libpdfium.cr.so` for `arm64` in `~/linux-build/build/linux/pdfium/out/linux-arm64-release/`, confirming the build-args/patch logic from Tasks 1-2 actually compiles — this is the precondition Task 5 (x64) and Task 6 (install/test/archive) build on.
+- Produces: a working `libpdfium.cr.so` for `x64` in `~/linux-build/build/linux/pdfium/out/linux-x64-release/`, confirming the build-args/patch logic from Tasks 1-2 actually compiles — this is the precondition Task 5 (arm64) and Task 6 (install/test/archive) build on.
 
-The VM (`my-build-vm`) is itself `aarch64`, so `arm64` is the *native* target here — building it first isolates "does the patch + build-args pipeline work at all" from "does cross-compilation work," which is the next task's concern.
+The VM (`pdfium-linux-build`) is itself `x86_64` (amd64), so `x64` is the *native* target here — building it first isolates "does the patch + build-args pipeline work at all" from "does cross-compilation work," which is the next task's concern.
 
 - [ ] **Step 1: Run the patch task**
 
 Run:
 
 ```bash
-orb run -m my-build-vm bash -c "cd ~/linux-build && python3 make.py patch-linux"
+orb run -m pdfium-linux-build bash -c "cd ~/linux-build && python3 make.py patch-linux"
 ```
 
 Expected: exits 0. Verify the patch applied:
 
 ```bash
-orb run -m my-build-vm bash -c "grep -c 'shared_library(\"pdfium\")' ~/linux-build/build/linux/pdfium/BUILD.gn"
+orb run -m pdfium-linux-build bash -c "grep -c 'shared_library(\"pdfium\")' ~/linux-build/build/linux/pdfium/BUILD.gn"
 ```
 Expected output: `1` (or greater).
 
@@ -541,7 +542,7 @@ Expected output: `1` (or greater).
 Rather than editing `modules/config.py` in place (fragile to patch and revert correctly), write a standalone script that reuses `modules/linux.py`'s real build logic but overrides the target list in memory for this one run. Create this file directly inside the VM checkout (it is a throwaway spike file, never copied into this macOS repo or committed):
 
 ```bash
-orb run -m my-build-vm bash -c "cat > ~/linux-build/spike_build_one_arch.py << 'PYEOF'
+orb run -m pdfium-linux-build bash -c "cat > ~/linux-build/spike_build_one_arch.py << 'PYEOF'
 import sys
 
 import modules.config as c
@@ -558,28 +559,28 @@ linux.run_task_build()
 PYEOF"
 ```
 
-- [ ] **Step 3: Run the build for arm64 only**
+- [ ] **Step 3: Run the build for x64 only**
 
 Run:
 
 ```bash
-orb run -m my-build-vm bash -c "cd ~/linux-build && export PATH=\$PATH:\$PWD/build/depot-tools && python3 spike_build_one_arch.py arm64"
+orb run -m pdfium-linux-build bash -c "cd ~/linux-build && export PATH=\$PATH:\$PWD/build/depot-tools && python3 spike_build_one_arch.py x64"
 ```
 
-Expected: exits 0. If `gn gen` fails with an error mentioning a missing sysroot (message will reference `use_sysroot` or a path under `build/linux/*-sysroot`), that means the sysroot fetched in Task 3 Step 5 didn't cover this arch/naming — re-run `install-sysroot.py --arch=arm64` manually inside `~/linux-build/build/linux/pdfium` and retry before concluding this step failed.
+Expected: exits 0. If `gn gen` fails with an error mentioning a missing sysroot (message will reference `use_sysroot` or a path under `build/linux/*-sysroot`), that means the sysroot fetched in Task 3 Step 5 didn't cover this arch/naming — re-run `install-sysroot.py --arch=amd64` manually inside `~/linux-build/build/linux/pdfium` and retry before concluding this step failed.
 
 - [ ] **Step 4: Verify the output binary**
 
 Run:
 
 ```bash
-orb run -m my-build-vm bash -c "file ~/linux-build/build/linux/pdfium/out/linux-arm64-release/libpdfium.cr.so"
+orb run -m pdfium-linux-build bash -c "file ~/linux-build/build/linux/pdfium/out/linux-x64-release/libpdfium.cr.so"
 ```
 
-Expected: output contains `ELF 64-bit`, `ARM aarch64`, and `shared object`. If the filename isn't `libpdfium.cr.so` (e.g. it's plain `libpdfium.so`), list the directory instead:
+Expected: output contains `ELF 64-bit`, `x86-64`, and `shared object`. If the filename isn't `libpdfium.cr.so` (e.g. it's plain `libpdfium.so`), list the directory instead:
 
 ```bash
-orb run -m my-build-vm bash -c "ls ~/linux-build/build/linux/pdfium/out/linux-arm64-release/*.so"
+orb run -m pdfium-linux-build bash -c "ls ~/linux-build/build/linux/pdfium/out/linux-x64-release/*.so"
 ```
 
 and update the filename used in `modules/linux.py`'s `run_task_test` (in this macOS checkout) to match, then commit that fix.
@@ -594,46 +595,46 @@ git status
 If `modules/linux.py` shows changes, commit:
 ```bash
 git add modules/linux.py
-git commit -m "Fix shared library output filename discovered during arm64 build spike"
+git commit -m "Fix shared library output filename discovered during x64 build spike"
 ```
 Otherwise skip — this task made no permanent code changes.
 
 ---
 
-### Task 5: x64 build spike (cross-compile on the VM)
+### Task 5: arm64 build spike (cross-compile on the VM)
 
 **Files:** none expected, unless a fix is required (same pattern as Task 4).
 
 **Interfaces:**
 - Consumes: the VM checkout (now with both targets restored) and `linux.run_task_build()` from Task 2.
-- Produces: a working `libpdfium.cr.so` for `x64` in `~/linux-build/build/linux/pdfium/out/linux-x64-release/`, confirming cross-compilation (the direction CI will actually need, since GitHub's `ubuntu-24.04` runners are x64 and `arm64` is the cross target there — the reverse of this VM).
+- Produces: a working `libpdfium.cr.so` for `arm64` in `~/linux-build/build/linux/pdfium/out/linux-arm64-release/`, confirming cross-compilation (the direction CI will actually need for the *other* arch too, since GitHub's `ubuntu-24.04` runners are x64 and `arm64` is the cross target there — same direction as this VM, unlike the originally planned arm64 VM).
 
 - [ ] **Step 1: Build both targets**
 
-Task 4 validated arm64 alone via the throwaway spike script; `modules/config.py` in the VM checkout still has both targets (it was never modified), so running the real `build-linux` task now exercises both arches, including x64:
+Task 4 validated x64 alone via the throwaway spike script; `modules/config.py` in the VM checkout still has both targets (it was never modified), so running the real `build-linux` task now exercises both arches, including arm64:
 
 ```bash
-orb run -m my-build-vm bash -c "cd ~/linux-build && export PATH=\$PATH:\$PWD/build/depot-tools && python3 make.py build-linux"
+orb run -m pdfium-linux-build bash -c "cd ~/linux-build && export PATH=\$PATH:\$PWD/build/depot-tools && python3 make.py build-linux"
 ```
 
-Expected: exits 0, and takes noticeably longer than Task 4 (now building two archs). If `gn gen` for the `x64` target fails on a missing sysroot, run `install-sysroot.py --arch=amd64` manually inside `~/linux-build/build/linux/pdfium` (this is the case the design spec flagged as likely needed regardless of host arch) and retry.
+Expected: exits 0, and takes noticeably longer than Task 4 (now building two archs, one under emulation). If `gn gen` for the `arm64` target fails on a missing sysroot, run `install-sysroot.py --arch=arm64` manually inside `~/linux-build/build/linux/pdfium` and retry.
 
-- [ ] **Step 2: Verify the x64 output binary**
+- [ ] **Step 2: Verify the arm64 output binary**
 
 Run:
 
 ```bash
-orb run -m my-build-vm bash -c "file ~/linux-build/build/linux/pdfium/out/linux-x64-release/libpdfium.cr.so"
+orb run -m pdfium-linux-build bash -c "file ~/linux-build/build/linux/pdfium/out/linux-arm64-release/libpdfium.cr.so"
 ```
 
-Expected: output contains `ELF 64-bit`, `x86-64`, and `shared object`.
+Expected: output contains `ELF 64-bit`, `ARM aarch64`, and `shared object`.
 
 - [ ] **Step 3: Commit (only if a fix was required)**
 
 ```bash
 git status
 ```
-Commit any change to `modules/linux.py` or `modules/common.py` the same way as prior tasks, with a message describing what the x64 cross-compile spike revealed. Otherwise skip.
+Commit any change to `modules/linux.py` or `modules/common.py` the same way as prior tasks, with a message describing what the arm64 cross-compile spike revealed. Otherwise skip.
 
 ---
 
@@ -648,13 +649,13 @@ Commit any change to `modules/linux.py` or `modules/common.py` the same way as p
 - [ ] **Step 1: Run install**
 
 ```bash
-orb run -m my-build-vm bash -c "cd ~/linux-build && python3 make.py install-linux"
+orb run -m pdfium-linux-build bash -c "cd ~/linux-build && python3 make.py install-linux"
 ```
 
 Expected: exits 0. Verify:
 
 ```bash
-orb run -m my-build-vm bash -c "ls ~/linux-build/build/linux/release/lib/x64/ ~/linux-build/build/linux/release/lib/arm64/ ~/linux-build/build/linux/release/include/"
+orb run -m pdfium-linux-build bash -c "ls ~/linux-build/build/linux/release/lib/x64/ ~/linux-build/build/linux/release/lib/arm64/ ~/linux-build/build/linux/release/include/"
 ```
 
 Expected: each `lib/<arch>/` directory contains a `.so` file, and `include/` contains PDFium's public headers (e.g. `fpdfview.h`).
@@ -662,7 +663,7 @@ Expected: each `lib/<arch>/` directory contains a `.so` file, and `include/` con
 - [ ] **Step 2: Run test**
 
 ```bash
-orb run -m my-build-vm bash -c "cd ~/linux-build && python3 make.py test-linux"
+orb run -m pdfium-linux-build bash -c "cd ~/linux-build && python3 make.py test-linux"
 ```
 
 Expected: exits 0, prints two `file` command results (one per arch), each reporting a valid ELF shared object matching the arch (`aarch64` for arm64, `x86-64` for x64). If this step fails because the installed filename doesn't match `libpdfium.cr.so`, apply the same filename fix as Task 4 Step 4 to `run_task_install`'s copy logic isn't at fault (it copies anything ending in `.so`, so this should only be a `run_task_test` filename mismatch, not an install bug).
@@ -670,13 +671,13 @@ Expected: exits 0, prints two `file` command results (one per arch), each report
 - [ ] **Step 3: Run archive**
 
 ```bash
-orb run -m my-build-vm bash -c "cd ~/linux-build && python3 make.py archive-linux"
+orb run -m pdfium-linux-build bash -c "cd ~/linux-build && python3 make.py archive-linux"
 ```
 
 Expected: exits 0, creates `~/linux-build/linux.tgz`. Verify:
 
 ```bash
-orb run -m my-build-vm bash -c "tar -tzf ~/linux-build/linux.tgz | head -20"
+orb run -m pdfium-linux-build bash -c "tar -tzf ~/linux-build/linux.tgz | head -20"
 ```
 
 Expected: lists `release/lib/x64/...`, `release/lib/arm64/...`, and `release/include/...` entries.
@@ -684,7 +685,7 @@ Expected: lists `release/lib/x64/...`, `release/lib/arm64/...`, and `release/inc
 - [ ] **Step 4: Copy the artifact back for inspection (optional but recommended)**
 
 ```bash
-orb run -m my-build-vm bash -c "cp ~/linux-build/linux.tgz /mnt/mac/Users/dangminhhoanglong/emdash/worktrees/pdfium-lib/emdash/linux-build-iqgr7/linux.tgz"
+orb run -m pdfium-linux-build bash -c "cp ~/linux-build/linux.tgz /mnt/mac/Users/dangminhhoanglong/emdash/worktrees/pdfium-lib/emdash/linux-build-iqgr7/linux.tgz"
 ```
 
 This lets you inspect the real artifact from macOS. Delete it afterward (it's a build output, not a tracked file):
@@ -887,8 +888,8 @@ Obs:
 
 If you're on macOS, [OrbStack](https://orbstack.dev/) gives you a real Linux VM to run these steps without Docker:
 
-1. Create a VM: `orb create ubuntu`
-2. Open a shell in it: `orb shell`
+1. Create an **amd64** VM: `orb create -a amd64 ubuntu`. On Apple Silicon, don't use the default (arm64) architecture — PDFium's `DEPS` unconditionally fetches a `buildtools/reclient` CIPD package with no `linux-arm64` build for the pinned version, so `gclient sync` fails outright on an arm64 Linux host no matter which architecture you're trying to build for. `amd64` (run under OrbStack's emulation) avoids this entirely.
+2. Open a shell in it: `orb shell -m <machine-name>`
 3. `cd` to this repo through the automatic macOS mount, e.g. `cd /mnt/mac/Users/<you>/path/to/pdfium-lib`
 4. Run the steps above from inside that shell.
 
@@ -962,4 +963,4 @@ git commit -m "Add Linux build documentation"
 ## Plan completion notes
 
 - This plan does not push any commits or trigger CI — that's a separate decision. Once all tasks pass, review the commits with `git log` and decide whether to push the branch / open a PR.
-- The `my-build-vm` OrbStack VM used throughout Tasks 3-6 is a pre-existing local dev machine, not something this plan creates or tears down. Leftover state in `~/linux-build` inside that VM is safe to leave in place or delete (`orb run -m my-build-vm rm -rf ~/linux-build`) once the plan is done — it isn't referenced by anything outside this plan's execution.
+- The `pdfium-linux-build` OrbStack VM (amd64) used throughout Tasks 3-6 was created during this plan's execution (Task 3), to work around the pre-existing `my-build-vm` (arm64) being fundamentally unable to check out PDFium at all — see the Global Constraints note. It's a reusable local dev machine going forward for this project, not a throwaway; leftover state in `~/linux-build` inside it is safe to leave in place or delete (`orb run -m pdfium-linux-build rm -rf ~/linux-build`) once the plan is done — it isn't referenced by anything outside this plan's execution. `my-build-vm` itself was untouched and is unaffected.
