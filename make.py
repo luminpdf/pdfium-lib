@@ -44,6 +44,13 @@ Tasks:
   - test-android
   - archive-android
 
+  - build-pdfium-linux
+  - patch-linux
+  - build-linux
+  - install-linux
+  - test-linux
+  - archive-linux
+
   - build-pdfium-wasm
   - patch-wasm
   - build-wasm
@@ -64,6 +71,7 @@ import modules.android as android
 import modules.common as common
 import modules.config as c
 import modules.ios as ios
+import modules.linux as linux
 import modules.macos as macos
 import modules.wasm as wasm
 
@@ -187,6 +195,34 @@ def main(options):
     # archive - android
     elif task == "archive-android":
         android.run_task_archive()
+
+    #######################
+    # Linux
+    #######################
+
+    # build pdfium - linux
+    elif task == "build-pdfium-linux":
+        linux.run_task_build_pdfium()
+
+    # patch - linux
+    elif task == "patch-linux":
+        linux.run_task_patch()
+
+    # build - linux
+    elif task == "build-linux":
+        linux.run_task_build()
+
+    # install - linux
+    elif task == "install-linux":
+        linux.run_task_install()
+
+    # test - linux
+    elif task == "test-linux":
+        linux.run_task_test()
+
+    # archive - linux
+    elif task == "archive-linux":
+        linux.run_task_archive()
 
     #######################
     # WASM
