@@ -192,7 +192,7 @@ def run_task_test():
                 "build", "linux", config, "lib", target["target_cpu"]
             )
 
-            command = ["file", os.path.join(lib_dir, "libpdfium.cr.so")]
+            command = ["file", os.path.join(lib_dir, "libpdfium.so")]
             r.run(command)
 
     l.ok()
