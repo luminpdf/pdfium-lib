@@ -464,9 +464,9 @@ orb run -m pdfium-linux-build bash -c "cd ~/linux-build && python3 make.py build
 Expected: exits 0; `~/linux-build/build/depot-tools` exists afterward. Verify with:
 
 ```bash
-orb run -m pdfium-linux-build bash -c "test -d ~/linux-build/build/depot-tools/gclient && echo FOUND"
+orb run -m pdfium-linux-build bash -c "test -e ~/linux-build/build/depot-tools/gclient && echo FOUND"
 ```
-Expected output: `FOUND`.
+Expected output: `FOUND`. (`gclient` is an executable file in depot_tools, not a directory — use `-e`, not `-d`.)
 
 - [ ] **Step 5: Run the Linux PDFium checkout (Task 2's `run_task_build_pdfium`)**
 
