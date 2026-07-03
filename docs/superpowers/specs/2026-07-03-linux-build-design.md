@@ -14,17 +14,19 @@ Add a Linux target to this project's build pipeline, producing a shared library 
 
 Targets: `x64` and `arm64`, matching the macOS target list shape (two architectures, no more).
 
-**Portability approach: Approach A — portable build.**
+**Portability approach: Approach A — portable build, via Chromium's Linux GN defaults (not a custom base image).**
 
-Because the resulting `.so` is meant to be linked into a consumer's Linux app or server whose OS/distro isn't controlled by this project, building directly on the CI runner's default Ubuntu image (glibc ~2.39) would make the artifact fail with `GLIBC_2.xx not found` on older but still common deployment targets (Ubuntu 20.04, RHEL 8, etc.). To avoid that:
+Because the resulting `.so` is meant to be linked into a consumer's Linux app or server whose OS/distro isn't controlled by this project, we need to avoid it requiring a newer glibc/libstdc++ than the CI runner happens to have.
 
-- Compile against an older glibc baseline than the CI runner's default (exact base image/version to be pinned during implementation — e.g. an older Ubuntu LTS).
-- Statically link the C++ runtime: `-static-libstdc++ -static-libgcc`, so the artifact doesn't depend on the consumer's libstdc++ version.
+Research during plan-writing (see plan doc) found this is already handled by Chromium/PDFium's own defaults for `target_os="linux"`, so **no custom base image and no manual static-link flags are needed**:
+
+- `use_sysroot` defaults to `true` for `target_os="linux"`, which links against Chromium's bundled old-Debian sysroot instead of the build machine's glibc — this is the actual portability mechanism, not the choice of CI base image.
+- `use_custom_libcxx` defaults to `true` for Linux, which statically links Chromium's own libc++ instead of depending on the consumer's libstdc++ version.
 - Bundle FreeType into the library (`pdf_bundle_freetype=true`, matching how the Android target already avoids depending on the host's system FreeType/fontconfig).
 
-Net result: one self-contained `.so` per architecture that only depends on glibc (built against an old-enough baseline) and standard system libraries, not on the specific build machine's toolchain versions.
+Net result: build straight on the CI runner's default Ubuntu image (no pinned old base image required) — the sysroot and custom-libc++ defaults already produce a `.so` per architecture that doesn't depend on the build machine's own toolchain/glibc versions. The one piece that does need explicit handling is fetching the **arm64** sysroot when cross-compiling from an x64 host, since this repo's PDFium checkout only declares `target_os` (not `target_cpu`) to gclient — see the implementation plan for the exact command.
 
-This was chosen as the default without an explicit user confirmation (the clarifying question went unanswered) because it directly matches the stated use case (an app/server whose deployment environment isn't specified) and is the safer default to build around. **Flag during spec review if a simpler build (straight on `ubuntu-24.04`, accepting a modern-glibc requirement) is preferred instead** — that would drop the static-linking/old-baseline work and bundled-FreeType requirement.
+This was chosen as the default without an explicit user confirmation (the clarifying question went unanswered) because it directly matches the stated use case (an app/server whose deployment environment isn't specified) and is the safer default to build around.
 
 ## Module structure
 
@@ -60,8 +62,9 @@ elif target_os == "linux":
     args.append("clang_use_chrome_plugins=false")
     args.append("pdf_is_standalone=true")
     args.append("pdf_bundle_freetype=true")
-    # + static libstdc++/libgcc linking flags (exact gn args TBD during implementation)
 ```
+
+No `use_sysroot`/`use_custom_libcxx` overrides are added — leaving them unset keeps Chromium's Linux defaults (both `true`), which is what provides the portability described above.
 
 ## `make.py`
 
@@ -77,7 +80,7 @@ Same job shape as the other three workflows: checkout → Python setup → CMake
 
 Add a section to `docs/BUILD_LINUX.md` (parallel to `BUILD_ANDROID.md`'s "Docker (macOS arm64)" section) documenting OrbStack as the recommended way for macOS users to get a real Linux machine locally, replacing the role Docker plays for Android/WASM:
 
-- Create a VM matching the pinned build-baseline image chosen for Approach A (so local builds are tested against the same glibc floor as CI produces), e.g. `orb create ubuntu:<pinned-version>`.
+- Create a default Ubuntu VM (matching the CI runner's Ubuntu version is convenient but not load-bearing for portability, since the sysroot/custom-libc++ defaults — not the build machine's own OS version — are what make the artifact portable): `orb create ubuntu`.
 - Run the same commands from the "How to compile" + `BUILD_LINUX.md` steps inside the VM — no code changes needed since OrbStack provides an actual Ubuntu environment.
 - This is local-only tooling; the CI workflow is unaffected and continues to run natively on the GitHub-hosted `ubuntu-24.04` runner.
 
@@ -87,11 +90,9 @@ Same structure as `BUILD_ANDROID.md`: prerequisite steps link, PDFium checkout, 
 
 ## Deferred to implementation (not guessed here)
 
-- **Exact pinned base image/glibc version for Approach A** — needs research into what's both old enough for broad compatibility and still supported by the Chromium/depot_tools toolchain requirements.
-- **Exact arm64 sysroot mechanism** for cross-compiling from an x64 host — Chromium's `build/linux/sysroot_scripts/install-sysroot.py`, or something triggered automatically via `gclient sync` with `target_os=['linux']`. To be confirmed while implementing `run_task_build_pdfium`/`run_task_build`, not assumed here.
-- **Exact static-linking gn args** (`-static-libstdc++ -static-libgcc` equivalents in GN/ninja args) — to be worked out against PDFium's actual `BUILD.gn`/toolchain files during implementation.
+- **arm64 sysroot fetch mechanism** — `get_pdfium_by_target` only appends `target_os` (not `target_cpu`) to the `.gclient` file, so the automatic gclient hook that fetches Chromium's Linux sysroots (conditioned on `checkout_arm64`-style vars) is unlikely to fetch the arm64 sysroot on an x64 host. The implementation plan verifies this empirically and, if needed, calls `build/linux/sysroot_scripts/install-sysroot.py --arch=arm64` explicitly. Whether the x64/amd64 sysroot needs the same explicit treatment is also verified empirically rather than assumed.
 
 ## Risks
 
-- If the pinned old-glibc baseline conflicts with a minimum toolchain version required by the pinned PDFium `chromium/7623` branch, Approach A may need a newer floor than initially hoped — this is a real possibility to validate early in implementation rather than late.
 - Bundling FreeType (rather than dynamically linking system FreeType) increases binary size per architecture; not expected to be a problem for a server/app consumer but worth noting.
+- This design's build-arg reasoning (`use_sysroot`/`use_custom_libcxx` defaults) is based on Chromium's documented general Linux build behavior, not a build actually run against this repo's pinned `chromium/7623` PDFium branch — the implementation plan's first task is a real end-to-end build spike specifically to confirm this before the rest of the module is built out on top of it.
