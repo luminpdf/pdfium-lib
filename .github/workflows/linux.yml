@@ -56,6 +56,9 @@ jobs:
       - name: PDFium
         run: python3 make.py build-pdfium-${{ matrix.config.target }}
 
+      - name: Install Linux build packages
+        run: sudo apt-get install -y pkg-config libglib2.0-dev
+
       - name: PDFium build dependencies
         run: |
           cd build/${{ matrix.config.target }}/pdfium

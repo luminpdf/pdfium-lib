@@ -1,4 +1,5 @@
 import os
+import subprocess
 import tarfile
 
 from pygemstones.io import file as f
@@ -192,8 +193,25 @@ def run_task_test():
                 "build", "linux", config, "lib", target["target_cpu"]
             )
 
-            command = ["file", os.path.join(lib_dir, "libpdfium.so")]
+            lib_path = os.path.join(lib_dir, "libpdfium.so")
+
+            command = ["file", lib_path]
             r.run(command)
+
+            l.colored("Checking dynamic dependencies (portability)...", l.YELLOW)
+
+            needed_output = subprocess.check_output(
+                ["readelf", "-d", lib_path]
+            ).decode("utf-8")
+
+            for forbidden in ["libstdc++.so", "libc++.so"]:
+                if forbidden in needed_output:
+                    l.e(
+                        f"{lib_path} unexpectedly depends on {forbidden} — "
+                        "this breaks the portable-build guarantee (the C++ "
+                        "runtime should be statically linked via "
+                        "use_custom_libcxx)"
+                    )
 
     l.ok()
 
