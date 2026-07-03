@@ -200,9 +200,9 @@ def run_task_test():
 
             l.colored("Checking dynamic dependencies (portability)...", l.YELLOW)
 
-            needed_output = subprocess.check_output(
-                ["readelf", "-d", lib_path]
-            ).decode("utf-8")
+            needed_output = subprocess.check_output(["readelf", "-d", lib_path]).decode(
+                "utf-8"
+            )
 
             for forbidden in ["libstdc++.so", "libc++.so"]:
                 if forbidden in needed_output:
