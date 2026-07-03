@@ -80,7 +80,7 @@ Same job shape as the other three workflows: checkout → Python setup → CMake
 
 Add a section to `docs/BUILD_LINUX.md` (parallel to `BUILD_ANDROID.md`'s "Docker (macOS arm64)" section) documenting OrbStack as the recommended way for macOS users to get a real Linux machine locally, replacing the role Docker plays for Android/WASM:
 
-- Create a default Ubuntu VM (matching the CI runner's Ubuntu version is convenient but not load-bearing for portability, since the sysroot/custom-libc++ defaults — not the build machine's own OS version — are what make the artifact portable): `orb create ubuntu`.
+- Create an **amd64** Ubuntu VM — not the host's default architecture (arm64 on Apple Silicon): `orb create -a amd64 ubuntu`. This was corrected from an earlier draft of this line during implementation: PDFium's `DEPS` unconditionally fetches a `buildtools/reclient` CIPD package with no `linux-arm64` build for the pinned version, so `gclient sync` fails outright on an arm64 Linux host regardless of target arch — amd64 avoids this and also matches CI's `ubuntu-24.04` runner architecture. See `docs/BUILD_LINUX.md`'s OrbStack section for the authoritative, up-to-date instructions.
 - Run the same commands from the "How to compile" + `BUILD_LINUX.md` steps inside the VM — no code changes needed since OrbStack provides an actual Ubuntu environment.
 - This is local-only tooling; the CI workflow is unaffected and continues to run natively on the GitHub-hosted `ubuntu-24.04` runner.
 
