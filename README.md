@@ -10,6 +10,7 @@
   <a href="https://github.com/paulocoutinhox/pdfium-lib/actions/workflows/ios.yml"><img src="https://github.com/paulocoutinhox/pdfium-lib/actions/workflows/ios.yml/badge.svg" alt="PDFium - iOS"></a>
   <a href="https://github.com/paulocoutinhox/pdfium-lib/actions/workflows/macos.yml"><img src="https://github.com/paulocoutinhox/pdfium-lib/actions/workflows/macos.yml/badge.svg" alt="PDFium - macOS"></a>
   <a href="https://github.com/paulocoutinhox/pdfium-lib/actions/workflows/android.yml"><img src="https://github.com/paulocoutinhox/pdfium-lib/actions/workflows/android.yml/badge.svg" alt="PDFium - Android"></a>
+  <a href="https://github.com/paulocoutinhox/pdfium-lib/actions/workflows/linux.yml"><img src="https://github.com/paulocoutinhox/pdfium-lib/actions/workflows/linux.yml/badge.svg" alt="PDFium - Linux"></a>
   <a href="https://github.com/paulocoutinhox/pdfium-lib/actions/workflows/wasm.yml"><img src="https://github.com/paulocoutinhox/pdfium-lib/actions/workflows/wasm.yml/badge.svg" alt="PDFium - WASM"></a>
 </p>
 
@@ -27,11 +28,11 @@ This project currently compiles to these platforms:
 - [x] iOS simulator (x86_64, arm64)
 - [X] Android (armv7, armv8, x86, x86_64)
 - [x] macOS (x86_64, arm64)
+- [x] Linux (x64, arm64)
 - [x] WASM (Web Assembly)
 
 Platforms in roadmap:
 
-- Linux
 - Windows
 
 Obs: PDFium project is from Google and i only patch it to compile to all platforms above. Check all oficial details and PDFium license here:
@@ -97,6 +98,10 @@ Check tutorial here: [Build for macOS](docs/BUILD_MACOS.md)
 ## How to compile for Android
 
 Check tutorial here: [Build for Android](docs/BUILD_ANDROID.md)
+
+## How to compile for Linux
+
+Check tutorial here: [Build for Linux](docs/BUILD_LINUX.md)
 
 ## How to compile for WASM
 
