@@ -1,0 +1,245 @@
+import os
+import subprocess
+import tarfile
+
+from pygemstones.io import file as f
+from pygemstones.system import runner as r
+from pygemstones.util import log as l
+
+import modules.common as cm
+import modules.config as c
+import modules.patch as patch
+import modules.pdfium as p
+
+
+# -----------------------------------------------------------------------------
+def run_task_build_pdfium():
+    p.get_pdfium_by_target("linux")
+
+    l.colored("Installing Linux sysroots...", l.YELLOW)
+
+    pdfium_dir = os.path.join("build", "linux", "pdfium")
+
+    for target in c.targets_linux:
+        r.run(
+            [
+                "python3",
+                "build/linux/sysroot_scripts/install-sysroot.py",
+                "--arch={0}".format(target["sysroot_arch"]),
+            ],
+            cwd=pdfium_dir,
+        )
+
+    l.ok()
+
+
+# -----------------------------------------------------------------------------
+def run_task_patch():
+    l.colored("Patching files...", l.YELLOW)
+
+    # shared lib
+    if c.shared_lib_linux:
+        patch.apply_shared_library("linux")
+
+    # public headers
+    if c.shared_lib_linux:
+        patch.apply_public_headers("linux")
+
+    l.ok()
+
+
+# -----------------------------------------------------------------------------
+def run_task_build():
+    l.colored("Building libraries...", l.YELLOW)
+
+    current_dir = f.current_dir()
+
+    # configs
+    for config in c.configurations_linux:
+        # targets
+        for target in c.targets_linux:
+            main_dir = os.path.join(
+                "build",
+                target["target_os"],
+                "pdfium",
+                "out",
+                "{0}-{1}-{2}".format(target["target_os"], target["target_cpu"], config),
+            )
+
+            f.recreate_dir(main_dir)
+
+            os.chdir(
+                os.path.join(
+                    "build",
+                    target["target_os"],
+                    "pdfium",
+                )
+            )
+
+            # generating files...
+            l.colored(
+                'Generating files to arch "{0}" and configuration "{1}"...'.format(
+                    target["target_cpu"], config
+                ),
+                l.YELLOW,
+            )
+
+            args = cm.get_build_args(
+                config,
+                c.shared_lib_linux,
+                target["pdfium_os"],
+                target["target_cpu"],
+            )
+
+            args_str = " ".join(args)
+
+            command = [
+                "gn",
+                "gen",
+                "out/{0}-{1}-{2}".format(
+                    target["target_os"], target["target_cpu"], config
+                ),
+                "--args='{0}'".format(args_str),
+            ]
+            r.run(" ".join(command), shell=True)
+
+            # compiling...
+            l.colored(
+                'Compiling to arch "{0}" and configuration "{1}"...'.format(
+                    target["target_cpu"], config
+                ),
+                l.YELLOW,
+            )
+
+            command = [
+                "ninja",
+                "-C",
+                "out/{0}-{1}-{2}".format(
+                    target["target_os"], target["target_cpu"], config
+                ),
+                "pdfium",
+                "-v",
+            ]
+            r.run(command)
+
+            os.chdir(current_dir)
+
+    l.ok()
+
+
+# -----------------------------------------------------------------------------
+def run_task_install():
+    l.colored("Installing libraries...", l.YELLOW)
+
+    # configs
+    for config in c.configurations_linux:
+        f.recreate_dir(os.path.join("build", "linux", config))
+
+        # targets
+        for target in c.targets_linux:
+            out_dir = "{0}-{1}-{2}".format(
+                target["target_os"], target["target_cpu"], config
+            )
+
+            source_lib_dir = os.path.join("build", "linux", "pdfium", "out", out_dir)
+
+            lib_dir = os.path.join("build", "linux", config, "lib")
+            target_dir = os.path.join(lib_dir, target["target_cpu"])
+
+            f.recreate_dir(target_dir)
+
+            for basename in os.listdir(source_lib_dir):
+                if basename.endswith(".so"):
+                    pathname = os.path.join(source_lib_dir, basename)
+
+                    if os.path.isfile(pathname):
+                        f.copy_file(pathname, os.path.join(target_dir, basename))
+
+            # fix include path
+            source_include_path = os.path.join(
+                "build",
+                target["target_os"],
+                "pdfium",
+                "public",
+            )
+
+            headers = f.find_files(source_include_path, "*.h", True)
+
+            for header in headers:
+                f.replace_in_file(header, '#include "public/', '#include "../')
+
+        # headers
+        l.colored("Copying header files...", l.YELLOW)
+
+        include_dir = os.path.join("build", "linux", "pdfium", "public")
+        include_cpp_dir = os.path.join(include_dir, "cpp")
+        target_include_dir = os.path.join("build", "linux", config, "include")
+        target_include_cpp_dir = os.path.join(target_include_dir, "cpp")
+
+        f.recreate_dir(target_include_dir)
+        f.copy_files(include_dir, target_include_dir, "*.h")
+        f.copy_files(include_cpp_dir, target_include_cpp_dir, "*.h")
+
+    l.ok()
+
+
+# -----------------------------------------------------------------------------
+def run_task_test():
+    l.colored("Testing...", l.YELLOW)
+
+    for config in c.configurations_linux:
+        for target in c.targets_linux:
+            lib_dir = os.path.join(
+                "build", "linux", config, "lib", target["target_cpu"]
+            )
+
+            lib_path = os.path.join(lib_dir, "libpdfium.so")
+
+            command = ["file", lib_path]
+            r.run(command)
+
+            l.colored("Checking dynamic dependencies (portability)...", l.YELLOW)
+
+            needed_output = subprocess.check_output(["readelf", "-d", lib_path]).decode(
+                "utf-8"
+            )
+
+            for forbidden in ["libstdc++.so", "libc++.so"]:
+                if forbidden in needed_output:
+                    l.e(
+                        f"{lib_path} unexpectedly depends on {forbidden} — "
+                        "this breaks the portable-build guarantee (the C++ "
+                        "runtime should be statically linked via "
+                        "use_custom_libcxx)"
+                    )
+
+    l.ok()
+
+
+# -----------------------------------------------------------------------------
+def run_task_archive():
+    l.colored("Archiving...", l.YELLOW)
+
+    current_dir = os.getcwd()
+    lib_dir = os.path.join(current_dir, "build", "linux")
+    output_filename = os.path.join(current_dir, "linux.tgz")
+
+    tar = tarfile.open(output_filename, "w:gz")
+
+    for configuration in c.configurations_linux:
+        tar.add(
+            name=os.path.join(lib_dir, configuration),
+            arcname=os.path.basename(os.path.join(lib_dir, configuration)),
+            filter=lambda x: (
+                None
+                if "_" in x.name
+                and not x.name.endswith(".h")
+                and not x.name.endswith(".so")
+                and os.path.isfile(x.name)
+                else x
+            ),
+        )
+
+    tar.close()
+
+    l.ok()

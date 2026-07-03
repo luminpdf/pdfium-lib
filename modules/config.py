@@ -98,3 +98,21 @@ shared_lib_wasm = False
 targets_wasm = [
     {"target_os": "emscripten", "target_cpu": "wasm", "pdfium_os": "emscripten"},
 ]
+
+# linux
+configurations_linux = ["release"]
+shared_lib_linux = True
+targets_linux = [
+    {
+        "target_os": "linux",
+        "target_cpu": "x64",
+        "pdfium_os": "linux",
+        "sysroot_arch": "amd64",
+    },
+    {
+        "target_os": "linux",
+        "target_cpu": "arm64",
+        "pdfium_os": "linux",
+        "sysroot_arch": "arm64",
+    },
+]

@@ -156,6 +156,7 @@ def get_build_args(
     elif target_os == "linux":
         args.append("clang_use_chrome_plugins=false")
         args.append("pdf_is_standalone=true")
+        args.append("pdf_bundle_freetype=true")
     elif target_os.startswith("mac"):
         args.append('mac_deployment_target="11.0.0"')
         args.append("clang_use_chrome_plugins=false")
