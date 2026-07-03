@@ -518,7 +518,7 @@ If nothing changed, skip committing for this task.
 
 **Interfaces:**
 - Consumes: the VM checkout from Task 3, `linux.run_task_patch()` and `linux.run_task_build()` from Task 2.
-- Produces: a working `libpdfium.cr.so` for `x64` in `~/linux-build/build/linux/pdfium/out/linux-x64-release/`, confirming the build-args/patch logic from Tasks 1-2 actually compiles — this is the precondition Task 5 (arm64) and Task 6 (install/test/archive) build on.
+- Produces: a working `libpdfium.so` for `x64` in `~/linux-build/build/linux/pdfium/out/linux-x64-release/`, confirming the build-args/patch logic from Tasks 1-2 actually compiles — this is the precondition Task 5 (arm64) and Task 6 (install/test/archive) build on.
 
 The VM (`pdfium-linux-build`) is itself `x86_64` (amd64), so `x64` is the *native* target here — building it first isolates "does the patch + build-args pipeline work at all" from "does cross-compilation work," which is the next task's concern.
 
@@ -574,10 +574,10 @@ Expected: exits 0. If `gn gen` fails with an error mentioning a missing sysroot 
 Run:
 
 ```bash
-orb run -m pdfium-linux-build bash -c "file ~/linux-build/build/linux/pdfium/out/linux-x64-release/libpdfium.cr.so"
+orb run -m pdfium-linux-build bash -c "file ~/linux-build/build/linux/pdfium/out/linux-x64-release/libpdfium.so"
 ```
 
-Expected: output contains `ELF 64-bit`, `x86-64`, and `shared object`. If the filename isn't `libpdfium.cr.so` (e.g. it's plain `libpdfium.so`), list the directory instead:
+Expected: output contains `ELF 64-bit`, `x86-64`, and `shared object`. (Task 4 confirmed empirically the output is plain `libpdfium.so`, not `libpdfium.cr.so` — `modules/linux.py`'s `run_task_test` was corrected accordingly.) If the filename is something else entirely, list the directory instead:
 
 ```bash
 orb run -m pdfium-linux-build bash -c "ls ~/linux-build/build/linux/pdfium/out/linux-x64-release/*.so"
@@ -607,7 +607,7 @@ Otherwise skip — this task made no permanent code changes.
 
 **Interfaces:**
 - Consumes: the VM checkout (now with both targets restored) and `linux.run_task_build()` from Task 2.
-- Produces: a working `libpdfium.cr.so` for `arm64` in `~/linux-build/build/linux/pdfium/out/linux-arm64-release/`, confirming cross-compilation (the direction CI will actually need for the *other* arch too, since GitHub's `ubuntu-24.04` runners are x64 and `arm64` is the cross target there — same direction as this VM, unlike the originally planned arm64 VM).
+- Produces: a working `libpdfium.so` for `arm64` in `~/linux-build/build/linux/pdfium/out/linux-arm64-release/`, confirming cross-compilation (the direction CI will actually need for the *other* arch too, since GitHub's `ubuntu-24.04` runners are x64 and `arm64` is the cross target there — same direction as this VM, unlike the originally planned arm64 VM).
 
 - [ ] **Step 1: Build both targets**
 
@@ -624,7 +624,7 @@ Expected: exits 0, and takes noticeably longer than Task 4 (now building two arc
 Run:
 
 ```bash
-orb run -m pdfium-linux-build bash -c "file ~/linux-build/build/linux/pdfium/out/linux-arm64-release/libpdfium.cr.so"
+orb run -m pdfium-linux-build bash -c "file ~/linux-build/build/linux/pdfium/out/linux-arm64-release/libpdfium.so"
 ```
 
 Expected: output contains `ELF 64-bit`, `ARM aarch64`, and `shared object`.
@@ -644,7 +644,7 @@ Commit any change to `modules/linux.py` or `modules/common.py` the same way as p
 
 **Interfaces:**
 - Consumes: the compiled output from Task 5 (both arches present under `~/linux-build/build/linux/pdfium/out/`).
-- Produces: `~/linux-build/build/linux/release/lib/{x64,arm64}/libpdfium.cr.so`, `~/linux-build/build/linux/release/include/`, and `~/linux-build/linux.tgz` — the final artifact shape Task 7's CI workflow will upload.
+- Produces: `~/linux-build/build/linux/release/lib/{x64,arm64}/libpdfium.so`, `~/linux-build/build/linux/release/include/`, and `~/linux-build/linux.tgz` — the final artifact shape Task 7's CI workflow will upload.
 
 - [ ] **Step 1: Run install**
 
@@ -666,7 +666,7 @@ Expected: each `lib/<arch>/` directory contains a `.so` file, and `include/` con
 orb run -m pdfium-linux-build bash -c "cd ~/linux-build && python3 make.py test-linux"
 ```
 
-Expected: exits 0, prints two `file` command results (one per arch), each reporting a valid ELF shared object matching the arch (`aarch64` for arm64, `x86-64` for x64). If this step fails because the installed filename doesn't match `libpdfium.cr.so`, apply the same filename fix as Task 4 Step 4 to `run_task_install`'s copy logic isn't at fault (it copies anything ending in `.so`, so this should only be a `run_task_test` filename mismatch, not an install bug).
+Expected: exits 0, prints two `file` command results (one per arch), each reporting a valid ELF shared object matching the arch (`aarch64` for arm64, `x86-64` for x64). `run_task_test` already checks for `libpdfium.so` as of Task 4's fix (commit `a4b65c5`); `run_task_install`'s copy logic isn't at fault if this fails, since it copies anything ending in `.so` regardless of exact name — a failure here would point to something else entirely.
 
 - [ ] **Step 3: Run archive**
 
